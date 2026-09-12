@@ -3,7 +3,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-BUNDLE_ID="com.hackrice.healthapp"
+BUNDLE_ID="com.garysun.healthapp"
 SIM_NAME="HackRice"
 UDID_FILE=".build/sim-udid"
 APP_PATH=".build/DerivedData/Build/Products/Debug-iphonesimulator/HealthApp.app"
@@ -44,7 +44,7 @@ case "${1:-}" in
     ;;
   logs)
     xcrun simctl spawn "$(udid)" log show --last "${2:-2m}" --style compact \
-      --predicate 'subsystem == "com.hackrice.healthapp"' 2>/dev/null | tail -50
+      --predicate 'subsystem == "com.garysun.healthapp"' 2>/dev/null | tail -50
     ;;
   reset)
     xcrun simctl terminate "$(udid)" "$BUNDLE_ID" 2>/dev/null || true

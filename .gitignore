@@ -7,3 +7,4 @@
 *.xcodeproj
 DerivedData/
 notes/
+.swiftpm/
