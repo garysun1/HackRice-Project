@@ -4,10 +4,6 @@
 
 *HackRice — Healthcare Track (longevity/healthspan).*
 
-| Timeline | Trends | Briefing | Connections |
-|---|---|---|---|
-| ![Timeline](docs/screenshots/timeline.png) | ![Trends](docs/screenshots/trends.png) | ![Briefing](docs/screenshots/briefing-banner.png) | ![Connections](docs/screenshots/connections.png) |
-
 ## Why
 
 Appointments are 15 minutes; the months between them are where your health actually happens. Patients describe symptoms from memory — imprecise, incomplete, biased toward the last bad week. Interim turns "how have you been?" into data: every episode, its severity, what you took, and what the air and your sleep looked like when it happened.
