@@ -28,6 +28,12 @@ xcodegen generate                 # produces HealthApp.xcodeproj from project.ym
 open HealthApp.xcodeproj            # run the HealthApp scheme in a simulator or on device
 ```
 
+## Data modes
+
+`AppConfig.useMockData` is the single source-level mode switch. It defaults to `false`, so the app starts with real on-device data and no seeded timeline. Set it to `true` for the deterministic asthma persona and an in-memory store that never touches real data.
+
+Apple Health is connected explicitly from **Connections › Apple Health › Connect**. Symptoms can be added from the Timeline `+` menu, while daily sleep, activity, and nutrition can be entered there, from Trends `+`, or from Connections › Manual entry. Daily AQI history comes from Open-Meteo using the authorized device location, with Houston as the fallback.
+
 Headless (CI-style) loop used to build this project:
 
 ```sh
@@ -41,17 +47,15 @@ Useful launch arguments:
 
 | Argument | Effect |
 |---|---|
-| `-demoMode` | Seed 3 months of demo data (deterministic asthma persona) |
+| `-demoMode` | Force the seeded 3-month persona with an in-memory store |
+| `-inMemoryStore` | Keep real-mode events, manual metrics, and AQI cache ephemeral |
+| `-seedHealthKit` | After Connect, write the demo persona into HealthKit for readback testing |
+| `-offline` | Disable network AQI history and use an empty canned history |
 | `--mock-speech` | Deterministic transcriber — no mic/speech permissions touched |
-| `-healthkit` | Use the real HealthKit read path instead of the seeded mock |
-| `-seedHealthKit` | Write the demo persona into HealthKit so `-healthkit` has data to read (skips if already seeded) |
 | `-openTab trends` | Launch directly on a given tab |
+| `-healthkit` | Legacy compatibility argument; accepted and ignored because real mode always uses HealthKit |
 
-Pair `-healthkit -seedHealthKit` to exercise the real HealthKit queries on a simulator,
-which otherwise has no health data at all. Note that HealthKit records its authorization
-decision per bundle id and **that decision survives app uninstall** — if you ever dismiss
-the Health Access sheet, the app is permanently denied on that simulator and will never be
-prompted again. `xcrun simctl erase <device>` is the only reset.
+On a simulator, use an **iPhone 17**. HealthKit records authorization per bundle id and that decision survives app uninstall; if the permission state gets stuck, reset only that simulator with `xcrun simctl erase <device>`.
 
 Core-logic tests run anywhere, no simulator needed:
 

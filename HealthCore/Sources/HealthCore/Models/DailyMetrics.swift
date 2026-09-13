@@ -83,6 +83,38 @@ public struct DailyMetrics: Identifiable, Codable, Hashable, Sendable {
         }
     }
 
+    /// Union of days. Per metric, an override wins when present; otherwise the primary value is retained. Override AQI wins when non-nil.
+    public static func merge(
+        primary: [DailyMetrics],
+        overrides: [DailyMetrics],
+        calendar: Calendar = .current
+    ) -> [DailyMetrics] {
+        let primaryByDay = Dictionary(
+            primary.map { (calendar.startOfDay(for: $0.date), $0) },
+            uniquingKeysWith: { _, last in last }
+        )
+        let overridesByDay = Dictionary(
+            overrides.map { (calendar.startOfDay(for: $0.date), $0) },
+            uniquingKeysWith: { _, last in last }
+        )
+        return Set(primaryByDay.keys).union(overridesByDay.keys).sorted().map { day in
+            let primary = primaryByDay[day]
+            let override = overridesByDay[day]
+            return DailyMetrics(
+                date: day,
+                steps: override?.steps ?? primary?.steps,
+                sleepHours: override?.sleepHours ?? primary?.sleepHours,
+                restingHeartRate: override?.restingHeartRate ?? primary?.restingHeartRate,
+                workoutMinutes: override?.workoutMinutes ?? primary?.workoutMinutes,
+                dietaryEnergyKcal: override?.dietaryEnergyKcal ?? primary?.dietaryEnergyKcal,
+                caffeineMg: override?.caffeineMg ?? primary?.caffeineMg,
+                sodiumMg: override?.sodiumMg ?? primary?.sodiumMg,
+                waterML: override?.waterML ?? primary?.waterML,
+                peakAQI: override?.peakAQI ?? primary?.peakAQI
+            )
+        }
+    }
+
     /// Every populated metric paired with the app/device that supplied it.
     public var attributedMetrics: [(label: String, sourceName: String)] {
         entries.map { (label: $0.kind.displayName, sourceName: $0.sourceName) }

@@ -38,14 +38,24 @@ final class HealthKitProvider: HealthDataProvider, @unchecked Sendable {
     }
 
     private static let log = Logger(subsystem: "com.hackrice.healthapp", category: "health")
+    var includeWriteOnAuthorize = false
 
     func requestAuthorization() async throws {
+        try await requestAuthorization(includeWrite: includeWriteOnAuthorize)
+    }
+
+    func requestAuthorization(includeWrite: Bool) async throws {
         guard HKHealthStore.isHealthDataAvailable() else { return }
-        try await store.requestAuthorization(toShare: writeTypes, read: readTypes)
+        try await store.requestAuthorization(toShare: includeWrite ? writeTypes : [], read: readTypes)
         let steps = store.authorizationStatus(for: HKQuantityType(.stepCount))
         let sleep = store.authorizationStatus(for: HKCategoryType(.sleepAnalysis))
         let workouts = store.authorizationStatus(for: HKObjectType.workoutType())
         Self.log.info("share auth — steps:\(steps.rawValue) sleep:\(sleep.rawValue) workouts:\(workouts.rawValue)")
+    }
+
+    func authorizationRequestStatus() async -> HKAuthorizationRequestStatus? {
+        guard HKHealthStore.isHealthDataAvailable() else { return nil }
+        return try? await store.statusForAuthorizationRequest(toShare: [], read: readTypes)
     }
 
     /// Longest window we'll ask HealthKit for. Callers pass `.distantPast` to mean

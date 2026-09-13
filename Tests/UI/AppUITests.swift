@@ -34,10 +34,16 @@ final class AppUITests: XCTestCase {
     @MainActor
     func testHealthKitSeedAndReadBack() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["-healthkit", "-seedHealthKit", "--mock-speech", "-openTab", "trends"]
+        app.launchArguments = ["-seedHealthKit", "-inMemoryStore", "-offline", "--mock-speech", "-openTab", "connections"]
         app.launch()
 
-        grantHealthAccessIfPrompted()
+        let connect = app.descendants(matching: .any)["connections.appleHealth.connect"]
+        if connect.waitForExistence(timeout: 15) {
+            connect.tap()
+            grantHealthAccessIfPrompted()
+        } else {
+            XCTAssertTrue(app.staticTexts["Apple Health"].firstMatch.exists)
+        }
 
         XCTAssertTrue(app.tabBars.buttons["Trends"].waitForExistence(timeout: 15))
         app.tabBars.buttons["Trends"].tap()
@@ -111,6 +117,7 @@ final class AppUITests: XCTestCase {
         app.launch()
 
         app.buttons["timeline.record"].tap()
+        app.buttons["Voice note"].tap()
         XCTAssertTrue(app.buttons["record.mic"].waitForExistence(timeout: 5))
 
         // Start mock recording; the canned script streams in ~2s and finishes.
@@ -124,6 +131,99 @@ final class AppUITests: XCTestCase {
         // Sheet dismisses back to the timeline with the new entry present.
         XCTAssertTrue(app.buttons["timeline.record"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Chest Tightness"].firstMatch.exists)
+    }
+
+    @MainActor
+    func testRealModeStartsEmpty() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-inMemoryStore", "-offline", "-ignoreHealthKitData", "--mock-speech"]
+        app.launch()
+
+        XCTAssertTrue(
+            app.staticTexts["Your healthspan record starts here"].waitForExistence(timeout: 10)
+        )
+
+        app.tabBars.buttons["Trends"].tap()
+        XCTAssertTrue(
+            app.descendants(matching: .any)["trends.empty"].waitForExistence(timeout: 5)
+        )
+        let airQualityTile = app.descendants(matching: .any)["trends.tile.airQuality"]
+        XCTAssertFalse(airQualityTile.waitForExistence(timeout: 3))
+
+        app.tabBars.buttons["Connections"].tap()
+        let connect = app.descendants(matching: .any)["connections.appleHealth.connect"]
+        let hasConnectButton = connect.waitForExistence(timeout: 5)
+        let hasAppleHealthRow = app.staticTexts["Apple Health"].firstMatch.exists
+        XCTAssertTrue(hasConnectButton || hasAppleHealthRow)
+    }
+
+    @MainActor
+    func testManualMetricsShowInTrends() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-inMemoryStore", "-offline", "--mock-speech", "-openTab", "connections"]
+        app.launch()
+
+        let manualEntry = app.descendants(matching: .any)["connections.manualEntry"]
+        XCTAssertTrue(manualEntry.waitForExistence(timeout: 10))
+        manualEntry.tap()
+
+        let sleep = app.textFields["manual.metric.sleepHours"]
+        XCTAssertTrue(sleep.waitForExistence(timeout: 5))
+        sleep.tap()
+        sleep.typeText("5.5")
+
+        let metricsScreenshot = XCTAttachment(screenshot: app.screenshot())
+        metricsScreenshot.name = "phase34-manual-metrics-values"
+        metricsScreenshot.lifetime = .keepAlways
+        add(metricsScreenshot)
+
+        app.buttons["manual.save"].tap()
+
+        app.tabBars.buttons["Trends"].tap()
+        let tile = app.descendants(matching: .any)["trends.tile.sleepHours"]
+        XCTAssertTrue(tile.waitForExistence(timeout: 10))
+        XCTAssertTrue(tile.label.contains("5.5"), "Sleep tile should expose the manually entered value")
+
+        let trendsScreenshot = XCTAttachment(screenshot: app.screenshot())
+        trendsScreenshot.name = "phase34-trends-manual-sleep"
+        trendsScreenshot.lifetime = .keepAlways
+        add(trendsScreenshot)
+    }
+
+    @MainActor
+    func testManualEpisodeCreateAndDelete() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-inMemoryStore", "-offline", "--mock-speech"]
+        app.launch()
+
+        let emptyState = app.staticTexts["Your healthspan record starts here"]
+        XCTAssertTrue(emptyState.waitForExistence(timeout: 10))
+        app.buttons["timeline.record"].tap()
+
+        let menuScreenshot = XCTAttachment(screenshot: app.screenshot())
+        menuScreenshot.name = "phase34-timeline-menu"
+        menuScreenshot.lifetime = .keepAlways
+        add(menuScreenshot)
+
+        app.buttons["Log symptom"].tap()
+
+        let severity = app.sliders["episode.severity"]
+        XCTAssertTrue(severity.waitForExistence(timeout: 5))
+
+        let editorScreenshot = XCTAttachment(screenshot: app.screenshot())
+        editorScreenshot.name = "phase34-episode-editor"
+        editorScreenshot.lifetime = .keepAlways
+        add(editorScreenshot)
+
+        severity.adjust(toNormalizedSliderPosition: 0.7)
+        app.buttons["episode.save"].tap()
+
+        let row = app.staticTexts["Chest Tightness"].firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 15))
+        XCTAssertFalse(emptyState.exists)
+        row.swipeLeft()
+        app.buttons["Delete"].tap()
+        XCTAssertTrue(emptyState.waitForExistence(timeout: 5))
     }
 
     @MainActor

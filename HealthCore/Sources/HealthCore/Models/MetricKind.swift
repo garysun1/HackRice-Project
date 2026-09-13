@@ -30,6 +30,32 @@ public enum MetricKind: String, Codable, Hashable, Sendable, CaseIterable, Ident
         }
     }
 
+    public var unitLabel: String {
+        switch self {
+        case .steps: "steps"
+        case .sleepHours: "h"
+        case .restingHeartRate: "bpm"
+        case .workoutMinutes: "min"
+        case .dietaryEnergyKcal: "kcal"
+        case .caffeineMg, .sodiumMg: "mg"
+        case .waterML: "ml"
+        }
+    }
+
+    public var allowsDecimal: Bool { self == .sleepHours }
+
+    public var inputRange: ClosedRange<Double> {
+        switch self {
+        case .steps: 0...100_000
+        case .sleepHours: 0...24
+        case .restingHeartRate: 20...250
+        case .workoutMinutes: 0...1_440
+        case .dietaryEnergyKcal: 0...20_000
+        case .caffeineMg: 0...2_000
+        case .sodiumMg, .waterML: 0...20_000
+        }
+    }
+
     public var category: HealthDataCategory {
         switch self {
         case .steps, .workoutMinutes: .fitness

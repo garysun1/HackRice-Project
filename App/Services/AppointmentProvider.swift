@@ -17,8 +17,7 @@ final class CalendarAppointmentProvider: AppointmentProvider, @unchecked Sendabl
     private static let keywords = ["dr.", "dr ", "doctor", "appointment", "clinic", "checkup", "check-up", "physician", "pulmonolog", "cardiolog"]
 
     func nextAppointment() async -> Appointment? {
-        let granted = (try? await store.requestFullAccessToEvents()) ?? false
-        guard granted else { return nil }
+        guard EKEventStore.authorizationStatus(for: .event) == .fullAccess else { return nil }
 
         let start = Date()
         guard let end = Calendar.current.date(byAdding: .day, value: 14, to: start) else { return nil }

@@ -6,10 +6,27 @@ enum DataStore {
     static func makeContainer(inMemory: Bool = false) -> ModelContainer {
         let config = ModelConfiguration(isStoredInMemoryOnly: inMemory)
         do {
-            return try ModelContainer(for: StoredEvent.self, configurations: config)
+            return try ModelContainer(
+                for: StoredEvent.self,
+                StoredDailyMetric.self,
+                StoredDailyAQI.self,
+                configurations: config
+            )
         } catch {
             fatalError("Could not create ModelContainer: \(error)")
         }
+    }
+
+    @MainActor
+    static func removeSeededEvents(context: ModelContext) {
+        let descriptor = FetchDescriptor<StoredEvent>(
+            predicate: #Predicate { $0.sourceRaw == "seeded" }
+        )
+        guard let events = try? context.fetch(descriptor), !events.isEmpty else { return }
+        for event in events {
+            context.delete(event)
+        }
+        try? context.save()
     }
 
     /// In demo mode, load the seeded persona once (idempotent across launches).

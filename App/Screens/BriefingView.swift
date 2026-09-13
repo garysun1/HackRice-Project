@@ -48,6 +48,9 @@ struct BriefingView: View {
             .task(id: stored.count) {
                 await regenerate()
             }
+            .task(id: appEnvironment.metricsVersion) {
+                await regenerate()
+            }
             .task {
                 appointment = await appEnvironment.appointmentProvider.nextAppointment()
             }
@@ -56,9 +59,7 @@ struct BriefingView: View {
 
     private func regenerate() async {
         let events = stored.map(\.asHealthEvent)
-        if metrics.isEmpty {
-            metrics = await appEnvironment.loadDailyMetrics()
-        }
+        metrics = await appEnvironment.loadDailyMetrics()
         briefing = appEnvironment.intelligence.generateBriefing(events: events, metrics: metrics, now: Date())
     }
 

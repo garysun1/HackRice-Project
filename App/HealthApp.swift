@@ -1,12 +1,24 @@
 import SwiftUI
 import SwiftData
 import OSLog
+import HealthKit
+import EventKit
+import CoreLocation
 import HealthCore
 
 @main
 struct HealthApp: App {
-    @State private var appEnvironment = AppEnvironment()
-    private let container = DataStore.makeContainer()
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var appEnvironment: AppEnvironment
+    private let container: ModelContainer
+
+    init() {
+        let environment = AppEnvironment()
+        let container = DataStore.makeContainer(inMemory: environment.usesInMemoryStore)
+        environment.attach(container: container)
+        _appEnvironment = State(initialValue: environment)
+        self.container = container
+    }
 
     var body: some Scene {
         WindowGroup {
@@ -19,8 +31,14 @@ struct HealthApp: App {
                             context: container.mainContext,
                             persona: appEnvironment.persona
                         )
+                    } else {
+                        DataStore.removeSeededEvents(context: container.mainContext)
+                        await appEnvironment.refreshAirQualityHistory()
                     }
-                    await appEnvironment.prepareHealthData()
+                }
+                .onChange(of: scenePhase) { _, phase in
+                    guard phase == .active, !appEnvironment.isDemoMode else { return }
+                    Task { await appEnvironment.refreshAirQualityHistory() }
                 }
         }
         .modelContainer(container)
@@ -36,70 +54,193 @@ final class AppEnvironment {
     static let log = Logger(subsystem: "com.hackrice.healthapp", category: "health")
 
     let isDemoMode: Bool
+    let isOffline: Bool
+    private let ignoresHealthKitData: Bool
+    let usesInMemoryStore: Bool
     let useMockSpeech: Bool
     let intelligence: any IntelligenceService
     let environmentService: any EnvironmentService
     /// Seeded demo persona; backs MockHealthProvider in demo mode.
     let persona: AsthmaPersona.Output
-    let healthProvider: any HealthDataProvider
+    @ObservationIgnored private(set) var healthProvider: any HealthDataProvider
+    @ObservationIgnored private(set) var localMetrics: LocalMetricStore?
+    @ObservationIgnored private(set) var airQualityHistory: AirQualityHistoryStore?
     let appointmentProvider: any AppointmentProvider
     /// `-seedHealthKit` writes the persona into HealthKit so the real read path
     /// has data to return on a simulator or a fresh device.
     let shouldSeedHealthKit: Bool
+    let locationService: LocationService
+    var metricsVersion = 0
+    var connectionStatus = ConnectionStatusSnapshot()
 
-    init(arguments: [String] = ProcessInfo.processInfo.arguments) {
-        self.isDemoMode = arguments.contains("-demoMode")
+    @ObservationIgnored private let healthKitProvider: HealthKitProvider?
+    @ObservationIgnored private let calendarStore = EKEventStore()
+
+    init(
+        arguments: [String] = ProcessInfo.processInfo.arguments,
+        useMockData: Bool = AppConfig.useMockData
+    ) {
+        let isDemoMode = arguments.contains("-demoMode") || useMockData
+
+        self.isDemoMode = isDemoMode
+        self.isOffline = arguments.contains("-offline")
+        self.ignoresHealthKitData = arguments.contains("-ignoreHealthKitData")
+        self.usesInMemoryStore = isDemoMode || arguments.contains("-inMemoryStore")
         self.useMockSpeech = arguments.contains("--mock-speech")
         self.shouldSeedHealthKit = arguments.contains("-seedHealthKit")
         self.intelligence = MockIntelligence()
+        self.persona = AsthmaPersona.generate()
+        let locationService = LocationService()
+        self.locationService = locationService
         self.environmentService = isDemoMode
             ? CannedEnvironmentService()
-            : OpenMeteoEnvironmentService()
-        self.persona = AsthmaPersona.generate()
-        // `-healthkit` opts into the real read path (requires the permission sheet,
-        // so it's for device/manual runs — unattended runs stay on the mock).
-        self.healthProvider = arguments.contains("-healthkit")
-            ? HealthKitProvider()
-            : MockHealthProvider(metrics: persona.metrics)
-        self.appointmentProvider = isDemoMode
-            ? DemoAppointmentProvider()
-            : CalendarAppointmentProvider()
+            : OpenMeteoEnvironmentService(coordinateProvider: { [locationService] in
+                let coordinate = await locationService.currentCoordinate()
+                return (lat: coordinate.latitude, lon: coordinate.longitude)
+            })
+        self.localMetrics = nil
+        self.airQualityHistory = nil
+
+        if isDemoMode {
+            self.healthKitProvider = nil
+            self.healthProvider = MockHealthProvider(metrics: persona.metrics)
+            self.appointmentProvider = DemoAppointmentProvider()
+        } else {
+            let healthKitProvider = HealthKitProvider()
+            healthKitProvider.includeWriteOnAuthorize = shouldSeedHealthKit
+            self.healthKitProvider = healthKitProvider
+            self.healthProvider = healthKitProvider
+            self.appointmentProvider = CalendarAppointmentProvider()
+        }
+
+        locationService.authorizationDidChange = { [weak self] in
+            Task { @MainActor in
+                await self?.refreshConnectionStatus()
+                await self?.refreshAirQualityHistory()
+            }
+        }
+    }
+
+    func attach(container: ModelContainer) {
+        let localMetrics = LocalMetricStore(context: container.mainContext)
+        let personaPeaks = Dictionary(
+            persona.metrics.compactMap { day in
+                day.peakAQI.map { (day.date, $0) }
+            },
+            uniquingKeysWith: { _, last in last }
+        )
+        let historyService: any AirQualityHistoryService
+        if isDemoMode {
+            historyService = CannedAirQualityHistory(peaks: personaPeaks)
+        } else if isOffline {
+            historyService = CannedAirQualityHistory(peaks: [:])
+        } else {
+            historyService = OpenMeteoAirQualityHistory()
+        }
+        let airQualityHistory = AirQualityHistoryStore(
+            context: container.mainContext,
+            service: historyService,
+            location: locationService
+        )
+        self.localMetrics = localMetrics
+        self.airQualityHistory = airQualityHistory
+        if let healthKitProvider {
+            healthProvider = CompositeHealthProvider(
+                healthKit: healthKitProvider,
+                local: localMetrics,
+                airQuality: airQualityHistory,
+                includeHealthKitData: !ignoresHealthKitData
+            )
+        }
+    }
+
+    func refreshAirQualityHistory() async {
+        guard let airQualityHistory else { return }
+        let count = airQualityHistory.rowCount
+        await airQualityHistory.refreshIfStale()
+        if airQualityHistory.rowCount != count { metricsVersion += 1 }
+    }
+
+    func recordLocalMetricsChanged() {
+        metricsVersion += 1
     }
 
     func makeTranscriber() -> any Transcriber {
         useMockSpeech ? MockTranscriber() : LiveTranscriber()
     }
 
-    /// One-shot authorization (plus optional seeding), shared by every caller.
-    /// Screens must await this before querying: a `.task` that queries HealthKit
-    /// before access is granted gets an empty result and caches it forever.
-    @ObservationIgnored private var readyTask: Task<Void, Never>?
-
-    func healthDataReady() async {
-        if readyTask == nil {
-            readyTask = Task { @MainActor [healthProvider, shouldSeedHealthKit, persona] in
-                do {
-                    try await healthProvider.requestAuthorization()
-                    if shouldSeedHealthKit {
-                        try await healthProvider.seedDemoData(persona.metrics)
-                    }
-                } catch {
-                    // Denied or unavailable: screens fall back to their empty states.
-                    Self.log.error("HealthKit unavailable: \(error.localizedDescription)")
-                }
+    /// Requests HealthKit access (and seeds if `-seedHealthKit`). Only ever called from the Connect button.
+    func connectAppleHealth() async {
+        do {
+            try await healthProvider.requestAuthorization()
+            if shouldSeedHealthKit {
+                try await healthProvider.seedDemoData(persona.metrics)
             }
+        } catch {
+            Self.log.error("HealthKit unavailable: \(error.localizedDescription)")
         }
-        await readyTask?.value
+        await refreshConnectionStatus()
+        metricsVersion += 1
     }
 
-    /// Kicks off authorization at launch so the prompt appears promptly.
-    func prepareHealthData() async {
-        await healthDataReady()
+    func connectCalendar() async {
+        do {
+            _ = try await calendarStore.requestFullAccessToEvents()
+        } catch {
+            Self.log.error("Calendar authorization failed: \(error.localizedDescription)")
+        }
+        await refreshConnectionStatus()
     }
 
-    /// The single entry point screens use for lifestyle data — always correctly ordered.
+    func connectLocation() {
+        locationService.requestWhenInUse()
+    }
+
+    func refreshConnectionStatus() async {
+        if isDemoMode {
+            connectionStatus = ConnectionStatusSnapshot(
+                health: .connected,
+                calendar: .connected,
+                location: .connected
+            )
+            return
+        }
+
+        let health: ConnectionState
+        guard let healthKitProvider,
+              let healthStatus = await healthKitProvider.authorizationRequestStatus() else {
+            health = .unavailable
+            connectionStatus = statusSnapshot(health: health)
+            return
+        }
+        switch healthStatus {
+        case .shouldRequest, .unknown:
+            health = .notConnected
+        case .unnecessary:
+            health = .connected
+        @unknown default:
+            health = .notConnected
+        }
+        connectionStatus = statusSnapshot(health: health)
+    }
+
+    private func statusSnapshot(health: ConnectionState) -> ConnectionStatusSnapshot {
+        let calendar: ConnectionState = switch EKEventStore.authorizationStatus(for: .event) {
+        case .fullAccess: .connected
+        case .notDetermined: .notConnected
+        default: .denied
+        }
+
+        let location: ConnectionState = switch locationService.authorizationStatus {
+        case .authorizedWhenInUse, .authorizedAlways: .connected
+        case .notDetermined: .notConnected
+        default: .denied
+        }
+
+        return ConnectionStatusSnapshot(health: health, calendar: calendar, location: location)
+    }
+
     func loadDailyMetrics() async -> [DailyMetrics] {
-        await healthDataReady()
         do {
             let metrics = try await healthProvider.dailyMetrics(from: .distantPast, to: .now)
             Self.log.info("loaded \(metrics.count) days of metrics")
@@ -111,14 +252,10 @@ final class AppEnvironment {
     }
 
     func loadContributingSources() async -> [String] {
-        await healthDataReady()
-        return (try? await healthProvider.contributingSources()) ?? []
+        (try? await healthProvider.contributingSources()) ?? []
     }
 
-    /// Backs the Connections drill-down. Same readiness ordering as the metrics loader —
-    /// querying before authorization resolves would cache an empty source list.
     func loadSourceContributions() async -> [SourceContribution] {
-        await healthDataReady()
         do {
             return try await healthProvider.sourceContributions()
         } catch {

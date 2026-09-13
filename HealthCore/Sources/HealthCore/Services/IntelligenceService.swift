@@ -17,7 +17,7 @@ public struct MockIntelligence: IntelligenceService {
     // MARK: - Extraction
 
     /// symptom keyword → canonical label, ordered by specificity (first match wins).
-    static let symptomLexicon: [(keywords: [String], label: String)] = [
+    public static let symptomLexicon: [(keywords: [String], label: String)] = [
         (["chest tightness", "tight chest", "chest feels tight"], "chest tightness"),
         (["shortness of breath", "short of breath", "hard to breathe", "couldn't breathe", "can't breathe", "breathless"], "shortness of breath"),
         (["wheez"], "wheezing"),
@@ -30,7 +30,7 @@ public struct MockIntelligence: IntelligenceService {
         (["chest pain"], "chest pain")
     ]
 
-    static let medicationLexicon: [(keywords: [String], label: String)] = [
+    public static let medicationLexicon: [(keywords: [String], label: String)] = [
         (["rescue inhaler", "albuterol", "inhaler"], "albuterol (rescue inhaler)"),
         (["flovent", "fluticasone", "controller"], "fluticasone (controller)"),
         (["ibuprofen", "advil"], "ibuprofen"),
@@ -38,7 +38,7 @@ public struct MockIntelligence: IntelligenceService {
         (["antihistamine", "zyrtec", "claritin"], "antihistamine")
     ]
 
-    static let contextTags: [(keywords: [String], tag: String)] = [
+    public static let contextTags: [(keywords: [String], tag: String)] = [
         (["outside", "outdoor", "walking out", "went out"], "outdoors"),
         (["exercise", "run", "running", "workout", "gym", "walking"], "during/after activity"),
         (["morning"], "morning"),

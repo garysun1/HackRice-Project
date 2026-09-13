@@ -23,6 +23,8 @@ struct TrendsView: View {
     @Query(sort: \StoredEvent.timestamp) private var stored: [StoredEvent]
     @State private var metrics: [DailyMetrics] = []
     @State private var range: TrendRange = .month
+    @State private var showingManualMetrics = false
+    @State private var hasLoaded = false
 
     private let calendar = Calendar.current
 
@@ -55,43 +57,73 @@ struct TrendsView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    Picker("Range", selection: $range) {
-                        ForEach(TrendRange.allCases) { range in
-                            Text(range.label).tag(range)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .accessibilityIdentifier("trends.range")
-
-                    if let correlation = insights.rankedCorrelations.first,
-                       correlation.strength != .insufficient {
-                        InsightCallout(text: correlation.calloutText)
-                    }
-
-                    LazyVGrid(
-                        columns: [GridItem(.flexible()), GridItem(.flexible())],
-                        spacing: 12
-                    ) {
-                        ForEach(displayedSeries) { series in
-                            NavigationLink(value: series) {
-                                MetricTile(
-                                    series: series,
-                                    correlation: insights.correlation(for: series),
-                                    metrics: windowedMetrics,
-                                    weekly: useWeekly
-                                )
+                    if hasLoaded && metrics.isEmpty && stored.isEmpty {
+                        ContentUnavailableView {
+                            Label("No data yet", systemImage: "chart.xyaxis.line")
+                        } description: {
+                            Text("Connect Apple Health or log an entry to start seeing trends.")
+                        } actions: {
+                            Button("Log daily metrics") {
+                                showingManualMetrics = true
                             }
-                            .buttonStyle(.plain)
-                            .accessibilityIdentifier("trends.tile.\(series.id)")
                         }
-                    }
+                        .accessibilityElement(children: .contain)
+                        .accessibilityIdentifier("trends.empty")
 
-                    statsRow
+                        statsRow
+                    } else {
+                        Picker("Range", selection: $range) {
+                            ForEach(TrendRange.allCases) { range in
+                                Text(range.label).tag(range)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        .accessibilityIdentifier("trends.range")
+
+                        if let correlation = insights.rankedCorrelations.first,
+                           correlation.strength != .insufficient {
+                            InsightCallout(text: correlation.calloutText)
+                        }
+
+                        LazyVGrid(
+                            columns: [GridItem(.flexible()), GridItem(.flexible())],
+                            spacing: 12
+                        ) {
+                            ForEach(displayedSeries) { series in
+                                NavigationLink(value: series) {
+                                    MetricTile(
+                                        series: series,
+                                        correlation: insights.correlation(for: series),
+                                        metrics: windowedMetrics,
+                                        weekly: useWeekly
+                                    )
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityIdentifier("trends.tile.\(series.id)")
+                            }
+                        }
+
+                        statsRow
+                    }
                 }
                 .padding()
             }
             .background(Color.appBackground)
             .navigationTitle("Trends")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        showingManualMetrics = true
+                    } label: {
+                        Image(systemName: "plus")
+                    }
+                    .accessibilityLabel("Log daily metrics")
+                    .accessibilityIdentifier("trends.add")
+                }
+            }
+            .sheet(isPresented: $showingManualMetrics) {
+                ManualMetricsView()
+            }
             .navigationDestination(for: TrendSeries.self) { series in
                 MetricDetailView(
                     series: series,
@@ -103,10 +135,9 @@ struct TrendsView: View {
                     windowEnd: windowEnd
                 )
             }
-            .task {
-                if metrics.isEmpty {
-                    metrics = await appEnvironment.loadDailyMetrics()
-                }
+            .task(id: appEnvironment.metricsVersion) {
+                metrics = await appEnvironment.loadDailyMetrics()
+                hasLoaded = true
             }
         }
     }

@@ -28,6 +28,8 @@
 	<string>Interim reads steps, sleep, heart rate, workouts, and nutrition to correlate them with your symptoms.</string>
 	<key>NSHealthUpdateUsageDescription</key>
 	<string>Interim writes demo sample data in demo mode only.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Interim uses your location to look up local air quality.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Interim uses the microphone so you can log health notes by voice.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>

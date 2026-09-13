@@ -3,8 +3,25 @@ import SwiftData
 import HealthCore
 
 struct TimelineView: View {
+    private enum PresentedSheet: Identifiable {
+        case voice
+        case createEpisode
+        case editEpisode(StoredEvent)
+        case metrics
+
+        var id: String {
+            switch self {
+            case .voice: "voice"
+            case .createEpisode: "createEpisode"
+            case .editEpisode(let event): "editEpisode-\(event.id.uuidString)"
+            case .metrics: "metrics"
+            }
+        }
+    }
+
+    @Environment(\.modelContext) private var modelContext
     @Query(sort: \StoredEvent.timestamp, order: .reverse) private var events: [StoredEvent]
-    @State private var showingRecord = false
+    @State private var presentedSheet: PresentedSheet?
 
     private var groupedByDay: [(day: Date, events: [StoredEvent])] {
         Dictionary(grouping: events) { Calendar.current.startOfDay(for: $0.timestamp) }
@@ -22,7 +39,19 @@ struct TimelineView: View {
                         ForEach(groupedByDay, id: \.day) { group in
                             Section {
                                 ForEach(group.events) { event in
-                                    EventRow(event: event)
+                                    Button {
+                                        presentedSheet = .editEpisode(event)
+                                    } label: {
+                                        EventRow(event: event)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .accessibilityIdentifier("timeline.event.\(event.id.uuidString)")
+                                    .swipeActions(edge: .trailing) {
+                                        Button("Delete", role: .destructive) {
+                                            modelContext.delete(event)
+                                            try? modelContext.save()
+                                        }
+                                    }
                                 }
                             } header: {
                                 Text(group.day, format: .dateTime.weekday(.wide).month().day())
@@ -45,29 +74,46 @@ struct TimelineView: View {
             .overlay(alignment: .bottomTrailing) {
                 recordButton
             }
-            .sheet(isPresented: $showingRecord) {
-                RecordView()
+            .sheet(item: $presentedSheet) { sheet in
+                switch sheet {
+                case .voice:
+                    RecordView()
+                case .createEpisode:
+                    EpisodeEditorView(.create)
+                case .editEpisode(let event):
+                    EpisodeEditorView(.edit(event))
+                case .metrics:
+                    ManualMetricsView()
+                }
             }
         }
     }
 
     private var recordButton: some View {
-        Button {
-            showingRecord = true
+        Menu {
+            Button("Voice note", systemImage: "mic.fill") {
+                presentedSheet = .voice
+            }
+            Button("Log symptom", systemImage: "square.and.pencil") {
+                presentedSheet = .createEpisode
+            }
+            Button("Log daily metrics", systemImage: "chart.bar.doc.horizontal") {
+                presentedSheet = .metrics
+            }
         } label: {
             ZStack {
                 Circle()
                     .fill(Color.brandTeal)
                     .frame(width: 62, height: 62)
                     .shadow(color: Color.brandTeal.opacity(0.4), radius: 10, y: 4)
-                Image(systemName: "mic.fill")
-                    .font(.system(size: 24))
+                Image(systemName: "plus")
+                    .font(.system(size: 24, weight: .semibold))
                     .foregroundStyle(.white)
             }
         }
         .padding(.trailing, 20)
         .padding(.bottom, 12)
-        .accessibilityLabel("Record a new entry")
+        .accessibilityLabel("Add an entry")
         .accessibilityIdentifier("timeline.record")
     }
 
