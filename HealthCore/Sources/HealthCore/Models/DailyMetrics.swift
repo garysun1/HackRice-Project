@@ -25,6 +25,12 @@ public struct DailyMetrics: Identifiable, Codable, Hashable, Sendable {
     public var workoutMinutes: Metric<Int>?
     /// Dietary energy in kilocalories (e.g. from MyFitnessPal).
     public var dietaryEnergyKcal: Metric<Int>?
+    /// Caffeine in mg (MyFitnessPal, Cronometer) — a sleep-quality driver.
+    public var caffeineMg: Metric<Int>?
+    /// Sodium in mg (MyFitnessPal, Cronometer).
+    public var sodiumMg: Metric<Int>?
+    /// Water intake in millilitres.
+    public var waterML: Metric<Int>?
     /// Daily peak US AQI, from the environment service.
     public var peakAQI: Int?
 
@@ -35,6 +41,9 @@ public struct DailyMetrics: Identifiable, Codable, Hashable, Sendable {
         restingHeartRate: Metric<Int>? = nil,
         workoutMinutes: Metric<Int>? = nil,
         dietaryEnergyKcal: Metric<Int>? = nil,
+        caffeineMg: Metric<Int>? = nil,
+        sodiumMg: Metric<Int>? = nil,
+        waterML: Metric<Int>? = nil,
         peakAQI: Int? = nil
     ) {
         self.date = date
@@ -43,6 +52,24 @@ public struct DailyMetrics: Identifiable, Codable, Hashable, Sendable {
         self.restingHeartRate = restingHeartRate
         self.workoutMinutes = workoutMinutes
         self.dietaryEnergyKcal = dietaryEnergyKcal
+        self.caffeineMg = caffeineMg
+        self.sodiumMg = sodiumMg
+        self.waterML = waterML
         self.peakAQI = peakAQI
+    }
+
+    /// Every populated metric on this day, paired with the app/device that supplied it.
+    /// Central list so new metrics surface in attribution UI without extra wiring.
+    public var attributedMetrics: [(label: String, sourceName: String)] {
+        var out: [(String, String)] = []
+        if let m = steps { out.append(("Steps", m.sourceName)) }
+        if let m = sleepHours { out.append(("Sleep", m.sourceName)) }
+        if let m = restingHeartRate { out.append(("Resting heart rate", m.sourceName)) }
+        if let m = workoutMinutes { out.append(("Workouts", m.sourceName)) }
+        if let m = dietaryEnergyKcal { out.append(("Nutrition", m.sourceName)) }
+        if let m = caffeineMg { out.append(("Caffeine", m.sourceName)) }
+        if let m = sodiumMg { out.append(("Sodium", m.sourceName)) }
+        if let m = waterML { out.append(("Water", m.sourceName)) }
+        return out
     }
 }

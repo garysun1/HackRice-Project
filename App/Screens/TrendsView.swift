@@ -19,9 +19,7 @@ struct TrendsView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     if let corr = insights.highAQICorrelation {
-                        InsightCallout(
-                            text: "\(corr.onHighAQIDays) of \(corr.total) episodes happened on high-AQI days — though only \(corr.highAQIDayShare)% of days were high-AQI."
-                        )
+                        InsightCallout(text: aqiCalloutText(corr))
                     }
 
                     ChartCard(title: "Air quality & episodes", systemImage: "aqi.medium") {
@@ -40,12 +38,17 @@ struct TrendsView: View {
             .navigationTitle("Trends")
             .task {
                 if metrics.isEmpty {
-                    metrics = (try? await appEnvironment.healthProvider.dailyMetrics(
-                        from: .distantPast, to: .now
-                    )) ?? []
+                    metrics = await appEnvironment.loadDailyMetrics()
                 }
             }
         }
+    }
+
+    /// Drops the base-rate clause when no daily AQI history exists to support it.
+    private func aqiCalloutText(_ corr: Insights.AQICorrelation) -> String {
+        let lead = "\(corr.onHighAQIDays) of \(corr.total) episodes happened on high-AQI days"
+        guard let share = corr.highAQIDayShare else { return lead + "." }
+        return lead + " — though only \(share)% of days were high-AQI."
     }
 
     private var aqiChart: some View {
@@ -120,6 +123,13 @@ struct TrendsView: View {
             StatTile(value: String(format: "%.1f", insights.meanSeverity), label: "avg severity")
             StatTile(value: String(format: "%.1f", insights.episodesPerWeek), label: "per week")
         }
+        // Carries how many days of lifestyle data the provider actually returned, so
+        // tests can tell "HealthKit returned nothing" from "the chart just looks empty".
+        // An invisible probe view can't be used: zero-size/zero-opacity views are
+        // dropped from the accessibility tree entirely.
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("trends.stats")
+        .accessibilityValue("metricDays:\(metrics.count)")
     }
 }
 

@@ -43,8 +43,10 @@ public struct Insights: Sendable {
     public struct AQICorrelation: Sendable {
         public let onHighAQIDays: Int
         public let total: Int
-        /// Percent of all tracked days that were high-AQI, for the base-rate comparison.
-        public let highAQIDayShare: Int
+        /// Percent of tracked days that were high-AQI, for the base-rate comparison.
+        /// Nil when no day carries an AQI reading — a HealthKit-only timeline has no
+        /// daily air-quality series, and quoting "0% of days" there would be a lie.
+        public let highAQIDayShare: Int?
     }
 
     /// Episodes on days with AQI > 100, vs. the base rate of such days.
@@ -60,8 +62,11 @@ public struct Insights: Sendable {
             if aqi > 100 { high += 1 }
         }
         guard counted > 0 else { return nil }
-        let highDays = metrics.filter { ($0.peakAQI ?? 0) > 100 }.count
-        let share = Int((Double(highDays) / Double(metrics.count) * 100).rounded())
+        // Base rate is only meaningful over days we actually have AQI for.
+        let daysWithAQI = metrics.compactMap(\.peakAQI)
+        let share = daysWithAQI.isEmpty
+            ? nil
+            : Int((Double(daysWithAQI.filter { $0 > 100 }.count) / Double(daysWithAQI.count) * 100).rounded())
         return AQICorrelation(onHighAQIDays: high, total: counted, highAQIDayShare: share)
     }
 

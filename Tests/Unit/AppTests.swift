@@ -3,6 +3,7 @@ import Testing
 import HealthCore
 @testable import HealthApp
 
+@MainActor
 @Suite struct AppEnvironmentTests {
     @Test func parsesLaunchArguments() {
         let env = AppEnvironment(arguments: ["app", "-demoMode", "--mock-speech"])

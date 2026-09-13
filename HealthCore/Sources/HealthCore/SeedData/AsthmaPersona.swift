@@ -13,6 +13,9 @@ public enum AsthmaPersona {
     /// Generates `days` days of history ending yesterday relative to `reference`.
     public static func generate(days: Int = 92, reference: Date = Date(), seed: UInt64 = 0xC0FFEE) -> Output {
         var rng = SplitMix64(seed: seed)
+        // Nutrition detail draws from its own stream so adding it leaves the
+        // original episode/AQI sequence — and every test pinned to it — unchanged.
+        var dietRng = SplitMix64(seed: seed &+ 0x0D1E7)
         let calendar = Calendar.current
         let today = calendar.startOfDay(for: reference)
 
@@ -41,13 +44,25 @@ public enum AsthmaPersona {
             let workedOut = rng.chance(0.3)
             let restingHR = 62 + Int(rng.next(upperBound: 9)) + (shortNight ? 3 : 0)
 
+            // Hoisted in their original order so the RNG call sequence is untouched.
+            let workoutMetric: DailyMetrics.Metric<Int>? = workedOut
+                ? .init(20 + Int(rng.next(upperBound: 40)), via: "Strava")
+                : nil
+            let loggedFood = rng.chance(0.6)
+            let energyMetric: DailyMetrics.Metric<Int>? = loggedFood
+                ? .init(1800 + Int(rng.next(upperBound: 700)), via: "MyFitnessPal")
+                : nil
+
             metrics.append(DailyMetrics(
                 date: day,
                 steps: .init(steps, via: "Fitbit (Google Health)"),
                 sleepHours: .init((sleep * 10).rounded() / 10, via: "Fitbit (Google Health)"),
                 restingHeartRate: .init(restingHR, via: "Apple Watch"),
-                workoutMinutes: workedOut ? .init(20 + Int(rng.next(upperBound: 40)), via: "Strava") : nil,
-                dietaryEnergyKcal: rng.chance(0.6) ? .init(1800 + Int(rng.next(upperBound: 700)), via: "MyFitnessPal") : nil,
+                workoutMinutes: workoutMetric,
+                dietaryEnergyKcal: energyMetric,
+                caffeineMg: loggedFood ? .init(40 + Int(dietRng.next(upperBound: 220)), via: "MyFitnessPal") : nil,
+                sodiumMg: loggedFood ? .init(1500 + Int(dietRng.next(upperBound: 2200)), via: "Cronometer") : nil,
+                waterML: loggedFood ? .init(1200 + Int(dietRng.next(upperBound: 1600)), via: "Cronometer") : nil,
                 peakAQI: aqi
             ))
 

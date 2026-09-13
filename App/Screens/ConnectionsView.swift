@@ -81,7 +81,7 @@ struct ConnectionsView: View {
             }
             .navigationTitle("Connections")
             .task {
-                sources = (try? await appEnvironment.healthProvider.contributingSources()) ?? []
+                sources = await appEnvironment.loadContributingSources()
             }
         }
     }

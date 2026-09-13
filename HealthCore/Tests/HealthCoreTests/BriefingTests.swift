@@ -51,4 +51,40 @@ import Testing
         #expect(partials == MockTranscriber.defaultScript)
         #expect(partials.last?.contains("rescue inhaler") == true)
     }
+
+    @Test func aqiBaseRateOmittedWhenNoDailyAirQuality() {
+        // A HealthKit-only timeline: events carry their own AQI snapshot, but the
+        // daily metric series has none, so there is no honest base rate to quote.
+        let events = (0..<3).map { i in
+            HealthEvent(
+                timestamp: reference.addingTimeInterval(Double(i) * 86_400),
+                symptom: "wheezing",
+                severity: 6,
+                transcript: "test",
+                source: .seeded,
+                environment: EnvironmentSnapshot(aqi: 140, capturedAt: reference)
+            )
+        }
+        let metrics = (0..<3).map { i in
+            DailyMetrics(
+                date: reference.addingTimeInterval(Double(i) * 86_400),
+                sleepHours: .init(7.0, via: "Apple Watch")
+            )
+        }
+        let corr = Insights(events: events, metrics: metrics).highAQICorrelation
+        #expect(corr?.onHighAQIDays == 3)
+        #expect(corr?.highAQIDayShare == nil)
+
+        let briefing = MockIntelligence().generateBriefing(events: events, metrics: metrics, now: reference)
+        let aqiLine = briefing.clinicianNote.correlations.first { $0.contains("AQI") }
+        #expect(aqiLine != nil)
+        #expect(aqiLine?.contains("0%") == false)
+        #expect(aqiLine?.contains("of days were high-AQI") == false)
+    }
+
+    @Test func aqiBaseRatePresentWhenDailySeriesExists() {
+        let out = AsthmaPersona.generate(reference: reference)
+        let corr = Insights(events: out.events, metrics: out.metrics).highAQICorrelation
+        #expect(corr?.highAQIDayShare != nil)
+    }
 }

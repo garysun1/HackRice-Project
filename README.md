@@ -44,7 +44,14 @@ Useful launch arguments:
 | `-demoMode` | Seed 3 months of demo data (deterministic asthma persona) |
 | `--mock-speech` | Deterministic transcriber — no mic/speech permissions touched |
 | `-healthkit` | Use the real HealthKit read path instead of the seeded mock |
+| `-seedHealthKit` | Write the demo persona into HealthKit so `-healthkit` has data to read (skips if already seeded) |
 | `-openTab trends` | Launch directly on a given tab |
+
+Pair `-healthkit -seedHealthKit` to exercise the real HealthKit queries on a simulator,
+which otherwise has no health data at all. Note that HealthKit records its authorization
+decision per bundle id and **that decision survives app uninstall** — if you ever dismiss
+the Health Access sheet, the app is permanently denied on that simulator and will never be
+prompted again. `xcrun simctl erase <device>` is the only reset.
 
 Core-logic tests run anywhere, no simulator needed:
 

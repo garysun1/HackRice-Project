@@ -57,9 +57,7 @@ struct BriefingView: View {
     private func regenerate() async {
         let events = stored.map(\.asHealthEvent)
         if metrics.isEmpty {
-            metrics = (try? await appEnvironment.healthProvider.dailyMetrics(
-                from: .distantPast, to: .now
-            )) ?? []
+            metrics = await appEnvironment.loadDailyMetrics()
         }
         briefing = appEnvironment.intelligence.generateBriefing(events: events, metrics: metrics, now: Date())
     }

@@ -1,5 +1,6 @@
 import Foundation
 import HealthKit
+import OSLog
 import HealthCore
 
 /// Real HealthKit read path. One integration point covers the whole ecosystem:
@@ -13,54 +14,89 @@ final class HealthKitProvider: HealthDataProvider, @unchecked Sendable {
             HKQuantityType(.stepCount),
             HKQuantityType(.restingHeartRate),
             HKQuantityType(.dietaryEnergyConsumed),
+            HKQuantityType(.dietaryCaffeine),
+            HKQuantityType(.dietarySodium),
+            HKQuantityType(.dietaryWater),
             HKCategoryType(.sleepAnalysis),
             HKObjectType.workoutType()
         ]
     }
 
+    /// Mirrors `readTypes` so `-seedHealthKit` can write the demo persona back out
+    /// and have it read in again through the real query path.
     private var writeTypes: Set<HKSampleType> {
         [
             HKQuantityType(.stepCount),
+            HKQuantityType(.restingHeartRate),
             HKQuantityType(.dietaryEnergyConsumed),
+            HKQuantityType(.dietaryCaffeine),
+            HKQuantityType(.dietarySodium),
+            HKQuantityType(.dietaryWater),
             HKCategoryType(.sleepAnalysis),
-            HKQuantityType(.heartRate)
+            HKObjectType.workoutType()
         ]
     }
+
+    private static let log = Logger(subsystem: "com.hackrice.healthapp", category: "health")
 
     func requestAuthorization() async throws {
         guard HKHealthStore.isHealthDataAvailable() else { return }
         try await store.requestAuthorization(toShare: writeTypes, read: readTypes)
+        let steps = store.authorizationStatus(for: HKQuantityType(.stepCount))
+        let sleep = store.authorizationStatus(for: HKCategoryType(.sleepAnalysis))
+        let workouts = store.authorizationStatus(for: HKObjectType.workoutType())
+        Self.log.info("share auth — steps:\(steps.rawValue) sleep:\(sleep.rawValue) workouts:\(workouts.rawValue)")
     }
 
-    func dailyMetrics(from start: Date, to end: Date) async throws -> [DailyMetrics] {
-        let calendar = Calendar.current
+    /// Longest window we'll ask HealthKit for. Callers pass `.distantPast` to mean
+    /// "everything"; taken literally that makes `HKStatisticsCollectionQuery` enumerate
+    /// ~700k daily buckets and fail, which upstream `try?`s turn into a silent empty chart.
+    private static let maxLookbackDays = 400
+
+    func dailyMetrics(from requestedStart: Date, to end: Date) async throws -> [DailyMetrics] {
+        let floor = Calendar.current.date(byAdding: .day, value: -Self.maxLookbackDays, to: end) ?? end
+        let start = min(max(requestedStart, floor), end)
+
         let steps = try await dailyQuantity(.stepCount, unit: .count(), options: .cumulativeSum, from: start, to: end)
         let restingHR = try await dailyQuantity(.restingHeartRate, unit: HKUnit.count().unitDivided(by: .minute()), options: .discreteAverage, from: start, to: end)
         let dietary = try await dailyQuantity(.dietaryEnergyConsumed, unit: .kilocalorie(), options: .cumulativeSum, from: start, to: end)
+        let caffeine = try await dailyQuantity(.dietaryCaffeine, unit: .gramUnit(with: .milli), options: .cumulativeSum, from: start, to: end)
+        let sodium = try await dailyQuantity(.dietarySodium, unit: .gramUnit(with: .milli), options: .cumulativeSum, from: start, to: end)
+        let water = try await dailyQuantity(.dietaryWater, unit: .literUnit(with: .milli), options: .cumulativeSum, from: start, to: end)
         let sleep = try await dailySleepHours(from: start, to: end)
+        let workouts = try await dailyWorkoutMinutes(from: start, to: end)
 
         var days: Set<Date> = []
-        days.formUnion(steps.keys)
-        days.formUnion(restingHR.keys)
-        days.formUnion(dietary.keys)
-        days.formUnion(sleep.keys)
+        for source in [steps, restingHR, dietary, caffeine, sodium, water, sleep, workouts] {
+            days.formUnion(source.keys)
+        }
 
+        // peakAQI is left nil here — air quality comes from EnvironmentService, not HealthKit.
         return days.sorted().map { day in
             DailyMetrics(
                 date: day,
                 steps: steps[day].map { .init(Int($0.value), via: $0.source) },
                 sleepHours: sleep[day].map { .init(($0.value * 10).rounded() / 10, via: $0.source) },
                 restingHeartRate: restingHR[day].map { .init(Int($0.value), via: $0.source) },
-                dietaryEnergyKcal: dietary[day].map { .init(Int($0.value), via: $0.source) }
+                workoutMinutes: workouts[day].map { .init(Int($0.value), via: $0.source) },
+                dietaryEnergyKcal: dietary[day].map { .init(Int($0.value), via: $0.source) },
+                caffeineMg: caffeine[day].map { .init(Int($0.value), via: $0.source) },
+                sodiumMg: sodium[day].map { .init(Int($0.value), via: $0.source) },
+                waterML: water[day].map { .init(Int($0.value), via: $0.source) }
             )
         }
-        // Note: workoutMinutes and peakAQI are filled elsewhere (workouts omitted for brevity in v1).
-        _ = calendar
     }
 
     func contributingSources() async throws -> [String] {
         var names: Set<String> = []
-        for type in [HKQuantityType(.stepCount), HKCategoryType(.sleepAnalysis), HKQuantityType(.dietaryEnergyConsumed)] as [HKSampleType] {
+        let types: [HKSampleType] = [
+            HKQuantityType(.stepCount),
+            HKCategoryType(.sleepAnalysis),
+            HKQuantityType(.dietaryEnergyConsumed),
+            HKQuantityType(.restingHeartRate),
+            HKObjectType.workoutType()
+        ]
+        for type in types {
             let sources: Set<HKSource> = try await withCheckedThrowingContinuation { continuation in
                 let query = HKSourceQuery(sampleType: type, samplePredicate: nil) { _, sources, error in
                     if let error { continuation.resume(throwing: error) } else { continuation.resume(returning: sources ?? []) }
@@ -70,6 +106,107 @@ final class HealthKitProvider: HealthDataProvider, @unchecked Sendable {
             names.formUnion(sources.map(\.name))
         }
         return names.sorted()
+    }
+
+    // MARK: - Demo seeding
+
+    /// Writes the seeded persona into HealthKit so `-healthkit` has something to read
+    /// on a simulator or fresh device. Idempotent-ish: call once per install.
+    ///
+    /// Caveat: HealthKit stamps every sample with *this* app as the source, so the
+    /// Connections screen will credit "Interim" rather than "Strava"/"Fitbit".
+    /// Real attribution only appears with the real contributing apps installed.
+    func seedDemoData(_ metrics: [DailyMetrics]) async throws {
+        guard HKHealthStore.isHealthDataAvailable() else { return }
+
+        // Seeding twice would double every step count and calorie total, so bail out
+        // if this app has already written samples. Makes `-seedHealthKit` safe to
+        // leave on across relaunches during a demo.
+        if try await hasSeededSamples() {
+            Self.log.info("HealthKit already seeded — skipping")
+            return
+        }
+
+        let calendar = Calendar.current
+        var samples: [HKSample] = []
+
+        for day in metrics {
+            // Midday anchor keeps each sample inside its own day bucket.
+            let noon = calendar.date(byAdding: .hour, value: 12, to: day.date) ?? day.date
+
+            if let steps = day.steps {
+                samples.append(quantity(.stepCount, unit: .count(), value: Double(steps.value), at: noon))
+            }
+            if let hr = day.restingHeartRate {
+                samples.append(quantity(.restingHeartRate, unit: HKUnit.count().unitDivided(by: .minute()), value: Double(hr.value), at: noon))
+            }
+            if let kcal = day.dietaryEnergyKcal {
+                samples.append(quantity(.dietaryEnergyConsumed, unit: .kilocalorie(), value: Double(kcal.value), at: noon))
+            }
+            if let caffeine = day.caffeineMg {
+                samples.append(quantity(.dietaryCaffeine, unit: .gramUnit(with: .milli), value: Double(caffeine.value), at: noon))
+            }
+            if let sodium = day.sodiumMg {
+                samples.append(quantity(.dietarySodium, unit: .gramUnit(with: .milli), value: Double(sodium.value), at: noon))
+            }
+            if let water = day.waterML {
+                samples.append(quantity(.dietaryWater, unit: .literUnit(with: .milli), value: Double(water.value), at: noon))
+            }
+            // Sleep is credited to the wake-up day by `dailySleepHours`, so the
+            // sample must *end* on this day: wake at 07:00, back-date the start.
+            if let sleep = day.sleepHours {
+                let wake = calendar.date(byAdding: .hour, value: 7, to: day.date) ?? day.date
+                let asleep = wake.addingTimeInterval(-sleep.value * 3600)
+                samples.append(HKCategorySample(
+                    type: HKCategoryType(.sleepAnalysis),
+                    value: HKCategoryValueSleepAnalysis.asleepCore.rawValue,
+                    start: asleep,
+                    end: wake
+                ))
+            }
+        }
+
+        Self.log.info("seeding \(samples.count) samples across \(metrics.count) days")
+        try await store.save(samples)
+
+        // Workouts have no public initializer on modern SDKs — they must be built.
+        for day in metrics {
+            guard let workout = day.workoutMinutes else { continue }
+            let start = calendar.date(byAdding: .hour, value: 17, to: day.date) ?? day.date
+            let end = start.addingTimeInterval(Double(workout.value) * 60)
+            let config = HKWorkoutConfiguration()
+            config.activityType = .running
+            let builder = HKWorkoutBuilder(healthStore: store, configuration: config, device: nil)
+            try await builder.beginCollection(at: start)
+            try await builder.endCollection(at: end)
+            _ = try await builder.finishWorkout()
+        }
+    }
+
+    /// True when this app has previously written step samples of its own.
+    private func hasSeededSamples() async throws -> Bool {
+        let predicate = HKQuery.predicateForObjects(from: HKSource.default())
+        let samples: [HKSample] = try await withCheckedThrowingContinuation { continuation in
+            let query = HKSampleQuery(
+                sampleType: HKQuantityType(.stepCount),
+                predicate: predicate,
+                limit: 1,
+                sortDescriptors: nil
+            ) { _, samples, error in
+                if let error { continuation.resume(throwing: error) } else { continuation.resume(returning: samples ?? []) }
+            }
+            store.execute(query)
+        }
+        return !samples.isEmpty
+    }
+
+    private func quantity(_ id: HKQuantityTypeIdentifier, unit: HKUnit, value: Double, at date: Date) -> HKQuantitySample {
+        HKQuantitySample(
+            type: HKQuantityType(id),
+            quantity: HKQuantity(unit: unit, doubleValue: value),
+            start: date,
+            end: date
+        )
     }
 
     // MARK: - Helpers
@@ -136,6 +273,34 @@ final class HealthKitProvider: HealthDataProvider, @unchecked Sendable {
             out[day] = (existing + hours, category.sourceRevision.source.name)
         }
         return out.mapValues { DayValue(value: $0.hours, source: $0.source) }
+    }
+
+    /// Total workout minutes per day, credited to the day the workout started.
+    /// This is what surfaces Strava, Peloton, Nike Run Club and friends by name.
+    private func dailyWorkoutMinutes(from start: Date, to end: Date) async throws -> [Date: DayValue] {
+        let predicate = HKQuery.predicateForSamples(withStart: start, end: end)
+        let samples: [HKSample] = try await withCheckedThrowingContinuation { continuation in
+            let query = HKSampleQuery(
+                sampleType: HKObjectType.workoutType(),
+                predicate: predicate,
+                limit: HKObjectQueryNoLimit,
+                sortDescriptors: nil
+            ) { _, samples, error in
+                if let error { continuation.resume(throwing: error) } else { continuation.resume(returning: samples ?? []) }
+            }
+            store.execute(query)
+        }
+
+        var out: [Date: (minutes: Double, source: String)] = [:]
+        for sample in samples {
+            guard let workout = sample as? HKWorkout else { continue }
+            let day = Calendar.current.startOfDay(for: workout.startDate)
+            let minutes = workout.duration / 60
+            let existing = out[day]
+            // Keep the first contributor's name; days rarely mix sources.
+            out[day] = ((existing?.minutes ?? 0) + minutes, existing?.source ?? workout.sourceRevision.source.name)
+        }
+        return out.mapValues { DayValue(value: $0.minutes, source: $0.source) }
     }
 
     private func primarySourceName(for type: HKSampleType) async throws -> String {

@@ -141,7 +141,12 @@ public struct MockIntelligence: IntelligenceService {
 
         var correlations: [String] = []
         if let aqiCorr = insights.highAQICorrelation {
-            correlations.append("\(aqiCorr.onHighAQIDays) of \(aqiCorr.total) episodes occurred on days with AQI > 100 (only \(aqiCorr.highAQIDayShare)% of days were high-AQI).")
+            var line = "\(aqiCorr.onHighAQIDays) of \(aqiCorr.total) episodes occurred on days with AQI > 100"
+            // Only claim a base rate when daily air-quality history backs it up.
+            if let share = aqiCorr.highAQIDayShare {
+                line += " (only \(share)% of days were high-AQI)"
+            }
+            correlations.append(line + ".")
         }
         if let sleepCorr = insights.shortSleepCorrelation {
             correlations.append("\(sleepCorr.afterShortSleep) of \(sleepCorr.total) episodes followed nights with under 6h sleep.")
