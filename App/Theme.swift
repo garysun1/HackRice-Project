@@ -6,10 +6,11 @@ extension Color {
     static let appBackground = Color(uiColor: .systemGroupedBackground)
 
     /// Severity 1–10 → color ramp used by badges and charts.
-    static func severity(_ value: Int) -> Color {
+    static func severity(_ value: Int?) -> Color {
         switch value {
-        case ..<4: return .brandTeal
-        case ..<7: return .orange
+        case nil: return .gray
+        case .some(..<4): return .brandTeal
+        case .some(..<7): return .orange
         default: return .red
         }
     }

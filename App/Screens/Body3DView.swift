@@ -7,7 +7,7 @@ import HealthCore
 /// pitch clamped), with inertia; idle slow-spin until first touch; tap a
 /// marker to open that region's episodes.
 struct Body3DView: UIViewRepresentable {
-    let regionData: [BodyRegion: (count: Int, maxSeverity: Int)]
+    let regionData: [BodyRegion: (count: Int, maxSeverity: Int?)]
     let onSelect: (BodyRegion) -> Void
 
     func makeUIView(context: Context) -> SCNView {
@@ -33,13 +33,13 @@ struct Body3DView: UIViewRepresentable {
     @MainActor
     final class Coordinator: NSObject {
         var onSelect: (BodyRegion) -> Void
-        private var regionData: [BodyRegion: (count: Int, maxSeverity: Int)]
+        private var regionData: [BodyRegion: (count: Int, maxSeverity: Int?)]
         private let bodyNode = SCNNode()
         private var pitchNode = SCNNode()
         private var markerNodes: [BodyRegion: SCNNode] = [:]
         private var hasInteracted = false
 
-        init(regionData: [BodyRegion: (count: Int, maxSeverity: Int)], onSelect: @escaping (BodyRegion) -> Void) {
+        init(regionData: [BodyRegion: (count: Int, maxSeverity: Int?)], onSelect: @escaping (BodyRegion) -> Void) {
             self.regionData = regionData
             self.onSelect = onSelect
         }
@@ -145,19 +145,44 @@ struct Body3DView: UIViewRepresentable {
         /// Marker anchor points on the mesh surface (mesh: feet y=0, height 1.69,
         /// A-pose ±0.44 wide, torso front z ≈ +0.11, back z ≈ -0.11).
         private func anchor(for region: BodyRegion) -> SCNVector3? {
+            // Mesh faces +z, so the character's LEFT side is at +x.
             switch region {
-            case .head: SCNVector3(0, 1.60, 0.10)
+            case .head: SCNVector3(0, 1.62, 0.07)
+            case .face: SCNVector3(0, 1.54, 0.10)
+            case .jaw: SCNVector3(0, 1.47, 0.09)
             case .throat: SCNVector3(0, 1.43, 0.07)
             case .chest: SCNVector3(0, 1.24, 0.11)
             case .abdomen: SCNVector3(0, 1.02, 0.11)
-            case .back: SCNVector3(0, 1.13, -0.11)
-            case .arms: SCNVector3(0.28, 1.05, 0.02)
-            case .legs: SCNVector3(0.10, 0.47, 0.07)
-            case .skin, .systemic: nil
+            case .pelvis: SCNVector3(0, 0.89, 0.10)
+            case .upperBack: SCNVector3(0, 1.24, -0.12)
+            case .lowerBack: SCNVector3(0, 1.00, -0.13)
+            case .leftShoulder: SCNVector3(0.16, 1.41, 0.04)
+            case .rightShoulder: SCNVector3(-0.16, 1.41, 0.04)
+            case .leftUpperArm: SCNVector3(0.21, 1.20, 0.02)
+            case .rightUpperArm: SCNVector3(-0.21, 1.20, 0.02)
+            case .leftElbow: SCNVector3(0.23, 1.08, 0.02)
+            case .rightElbow: SCNVector3(-0.23, 1.08, 0.02)
+            case .leftForearm: SCNVector3(0.235, 0.95, 0.03)
+            case .rightForearm: SCNVector3(-0.235, 0.95, 0.03)
+            case .leftWrist: SCNVector3(0.24, 0.80, 0.05)
+            case .rightWrist: SCNVector3(-0.24, 0.80, 0.05)
+            case .leftHand: SCNVector3(0.24, 0.72, 0.06)
+            case .rightHand: SCNVector3(-0.24, 0.72, 0.06)
+            case .leftThigh: SCNVector3(0.10, 0.65, 0.08)
+            case .rightThigh: SCNVector3(-0.10, 0.65, 0.08)
+            case .leftKnee: SCNVector3(0.09, 0.47, 0.08)
+            case .rightKnee: SCNVector3(-0.09, 0.47, 0.08)
+            case .leftShin: SCNVector3(0.09, 0.30, 0.08)
+            case .rightShin: SCNVector3(-0.09, 0.30, 0.08)
+            case .leftAnkle: SCNVector3(0.10, 0.10, 0.09)
+            case .rightAnkle: SCNVector3(-0.10, 0.10, 0.09)
+            case .leftFoot: SCNVector3(0.11, 0.05, 0.12)
+            case .rightFoot: SCNVector3(-0.11, 0.05, 0.12)
+            case .skin, .unspecified: nil
             }
         }
 
-        func updateMarkers(_ data: [BodyRegion: (count: Int, maxSeverity: Int)]) {
+        func updateMarkers(_ data: [BodyRegion: (count: Int, maxSeverity: Int?)]) {
             regionData = data
             markerNodes.values.forEach { $0.removeFromParentNode() }
             markerNodes.removeAll()
@@ -196,7 +221,7 @@ struct Body3DView: UIViewRepresentable {
                 marker.addChildNode(label)
 
                 // Gentle breathing pulse on the most severe region.
-                if stats.maxSeverity >= 7 {
+                if (stats.maxSeverity ?? 0) >= 7 {
                     let pulse = SCNAction.sequence([
                         .scale(to: 1.12, duration: 0.9),
                         .scale(to: 1.0, duration: 0.9)

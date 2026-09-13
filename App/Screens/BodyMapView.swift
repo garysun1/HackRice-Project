@@ -34,8 +34,15 @@ struct BodyMapView: View {
         Dictionary(grouping: filtered, by: \.bodyRegion)
     }
 
-    private var markerData: [BodyRegion: (count: Int, maxSeverity: Int)] {
-        byRegion.mapValues { (count: $0.count, maxSeverity: $0.map(\.severity).max() ?? 1) }
+    private var markerData: [BodyRegion: (count: Int, maxSeverity: Int?)] {
+        // `-bodyDebugMarkers`: light every anchor to eyeball placement.
+        if ProcessInfo.processInfo.arguments.contains("-bodyDebugMarkers") {
+            let mappable = BodyRegion.allCases.filter(\.isMappable)
+            return Dictionary(uniqueKeysWithValues: mappable.enumerated().map {
+                ($1, (count: $0 + 1, maxSeverity: 1 + ($0 * 9) / max(mappable.count - 1, 1)) as (count: Int, maxSeverity: Int?))
+            })
+        }
+        return byRegion.mapValues { (count: $0.count, maxSeverity: $0.compactMap(\.ratedSeverity).max()) }
     }
 
     var body: some View {
@@ -67,23 +74,24 @@ struct BodyMapView: View {
     private var accessibilitySummary: String {
         markerData
             .sorted { $0.value.count > $1.value.count }
-            .map { "\($0.key.displayName): \($0.value.count) episodes, worst severity \($0.value.maxSeverity)" }
+            .map { "\($0.key.displayName): \($0.value.count) episodes, \($0.value.maxSeverity.map { "worst severity \($0)" } ?? "not yet rated")" }
             .joined(separator: ". ")
     }
 
-    /// Skin + systemic don't belong on anatomy — they get chips below the figure.
+    /// Skin + still-unlocalized events don't belong on anatomy — they get
+    /// chips below the figure.
     private var diffuseChips: some View {
         HStack(spacing: 10) {
-            ForEach([BodyRegion.systemic, .skin], id: \.self) { region in
+            ForEach([BodyRegion.unspecified, .skin], id: \.self) { region in
                 if let regionEvents = byRegion[region], !regionEvents.isEmpty {
                     Button {
                         selectedRegion = region
                     } label: {
                         HStack(spacing: 6) {
                             Circle()
-                                .fill(Color.severity(regionEvents.map(\.severity).max() ?? 1))
+                                .fill(Color.severity(regionEvents.compactMap(\.ratedSeverity).max()))
                                 .frame(width: 10, height: 10)
-                            Text("\(region == .systemic ? "General" : "Skin") · \(regionEvents.count)")
+                            Text("\(region.displayName) · \(regionEvents.count)")
                                 .font(.rounded(.footnote, weight: .medium))
                                 .foregroundStyle(.primary)
                         }
@@ -112,7 +120,7 @@ private struct RegionDetailSheet: View {
                 EventRow(event: event)
             }
             .listStyle(.insetGrouped)
-            .navigationTitle("\(region == .systemic ? "General" : region.displayName) · \(events.count)")
+            .navigationTitle("\(region.displayName) · \(events.count)")
             .navigationBarTitleDisplayMode(.inline)
         }
     }

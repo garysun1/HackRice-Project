@@ -75,7 +75,7 @@ struct TrendsView: View {
                         y: .value("AQI", aqi)
                     )
                     .foregroundStyle(Color.severity(event.severity))
-                    .symbolSize(CGFloat(60 + event.severity * 14))
+                    .symbolSize(CGFloat(60 + (event.severity ?? 3) * 14))
                 }
             }
         }

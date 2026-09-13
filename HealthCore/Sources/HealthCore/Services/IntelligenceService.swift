@@ -28,12 +28,49 @@ public struct MockIntelligence: IntelligenceService {
         (["headache", "migraine"], "headache", .neurological, .head),
         (["sore throat", "throat"], "sore throat", .respiratory, .throat),
         (["stomach", "nausea", "nauseous", "cramp"], "stomach discomfort", .gastrointestinal, .abdomen),
-        (["back pain", "back ache", "backache"], "back pain", .pain, .back),
+        (["back pain", "back ache", "backache"], "back pain", .pain, .lowerBack),
         (["rash", "itch", "hives"], "skin irritation", .skin, .skin),
         (["chest pain"], "chest pain", .cardiovascular, .chest),
-        (["fatigue", "exhausted", "tired"], "fatigue", .general, .systemic),
+        (["fatigue", "exhausted", "tired"], "fatigue", .general, .unspecified),
         (["dizzy", "lightheaded"], "dizziness", .neurological, .head),
-        (["anxious", "anxiety", "panic"], "anxiety", .mentalHealth, .systemic)
+        (["anxious", "anxiety", "panic"], "anxiety", .mentalHealth, .unspecified)
+    ]
+
+    /// Explicit location phrases override the symptom's default region — this
+    /// is also how spoken answers to the "where was it?" follow-up resolve
+    /// offline. Longest/most specific phrases first.
+    static let regionLexicon: [(keywords: [String], region: BodyRegion)] = [
+        (["left shoulder"], .leftShoulder),
+        (["right shoulder"], .rightShoulder),
+        (["left elbow"], .leftElbow),
+        (["right elbow"], .rightElbow),
+        (["left forearm"], .leftForearm),
+        (["right forearm"], .rightForearm),
+        (["left wrist"], .leftWrist),
+        (["right wrist"], .rightWrist),
+        (["left hand", "left finger", "left thumb"], .leftHand),
+        (["right hand", "right finger", "right thumb"], .rightHand),
+        (["left arm", "left bicep"], .leftUpperArm),
+        (["right arm", "right bicep"], .rightUpperArm),
+        (["left knee"], .leftKnee),
+        (["right knee"], .rightKnee),
+        (["left thigh", "left hamstring"], .leftThigh),
+        (["right thigh", "right hamstring"], .rightThigh),
+        (["left shin", "left calf"], .leftShin),
+        (["right shin", "right calf"], .rightShin),
+        (["left ankle", "left heel"], .leftAnkle),
+        (["right ankle", "right heel"], .rightAnkle),
+        (["left foot", "left toe"], .leftFoot),
+        (["right foot", "right toe"], .rightFoot),
+        (["upper back", "between my shoulder blades"], .upperBack),
+        (["lower back"], .lowerBack),
+        (["hip", "pelvis", "groin"], .pelvis),
+        (["stomach", "belly", "abdomen"], .abdomen),
+        (["jaw"], .jaw),
+        (["eye", "ear", "nose", "cheek", "face", "sinus"], .face),
+        (["throat", "neck"], .throat),
+        (["chest"], .chest),
+        (["head", "forehead", "temple", "scalp"], .head)
     ]
 
     static let medicationLexicon: [(keywords: [String], label: String)] = [
@@ -55,12 +92,51 @@ public struct MockIntelligence: IntelligenceService {
     ]
 
     /// Severity phrases → 1–10.
+    /// Word→rating map used ONLY inside answers to the how-bad follow-up,
+    /// where the words ARE the patient's self-rating.
     static let severityCues: [(keywords: [String], severity: Int)] = [
-        (["worst", "severe", "terrible", "unbearable", "really bad", "very bad"], 8),
-        (["bad", "pretty bad", "hard to", "couldn't"], 6),
-        (["moderate", "noticeable", "annoying"], 5),
-        (["mild", "slight", "a little", "a bit", "minor"], 3)
+        (["worst ever", "unbearable", "emergency"], 9),
+        (["worst", "severe", "terrible", "awful"], 8),
+        (["really bad", "very bad", "so bad"], 7),
+        (["bad", "pretty bad"], 6),
+        (["moderate", "annoying"], 5),
+        (["noticeable", "uncomfortable"], 4),
+        (["mild", "a little", "a bit", "minor"], 3),
+        (["slight", "barely", "faint", "hardly"], 2)
     ]
+
+    /// Severity is the patient's own rating: an explicit "N out of 10" / "N/10"
+    /// anywhere, or the content of an answer to the how-bad follow-up (bare
+    /// number, number word, or intensity words). Never inferred from the note.
+    static func parseExplicitSeverity(from text: String) -> Int? {
+        if let match = text.range(of: #"(10|[1-9])\s*(?:/|out of)\s*(?:10|ten)"#, options: .regularExpression),
+           let n = Int(text[match].prefix(while: \.isNumber)) {
+            return min(max(n, 1), 10)
+        }
+        // Scan every follow-up answer line (latest stated rating wins).
+        var rating: Int?
+        var search = text.startIndex..<text.endIndex
+        while let marker = text.range(of: "patient answer:", range: search) {
+            let line = String(text[marker.upperBound...].prefix { $0 != "\n" })
+            rating = Self.severityFromAnswer(line) ?? rating
+            search = marker.upperBound..<text.endIndex
+        }
+        return rating
+    }
+
+    private static func severityFromAnswer(_ answer: String) -> Int? {
+        if let match = answer.range(of: #"\b(10|[1-9])\b"#, options: .regularExpression),
+           let n = Int(answer[match]) {
+            return n
+        }
+        let words = [("ten", 10), ("nine", 9), ("eight", 8), ("seven", 7), ("six", 6),
+                     ("five", 5), ("four", 4), ("three", 3), ("two", 2), ("one", 1)]
+        // Word-boundary match ("honestly" must not read as "one").
+        if let (_, n) = words.first(where: {
+            answer.range(of: #"\b\#($0.0)\b"#, options: .regularExpression) != nil
+        }) { return n }
+        return severityCues.first { $0.keywords.contains { answer.contains($0) } }?.severity
+    }
 
     public func extractEvent(from transcript: String, at timestamp: Date) -> HealthEvent {
         let text = transcript.lowercased()
@@ -68,6 +144,14 @@ public struct MockIntelligence: IntelligenceService {
         let match = Self.symptomLexicon.first { entry in
             entry.keywords.contains { text.contains($0) }
         }
+
+        // An explicitly stated location beats the symptom's default region.
+        // Word-boundary match: "early" must not read as "ear".
+        let statedRegion = Self.regionLexicon.first { entry in
+            entry.keywords.contains {
+                text.range(of: #"\b\#($0)\b"#, options: .regularExpression) != nil
+            }
+        }?.region
 
         let medications = Self.medicationLexicon.compactMap { entry in
             entry.keywords.contains(where: { text.contains($0) }) ? entry.label : nil
@@ -77,15 +161,8 @@ public struct MockIntelligence: IntelligenceService {
             entry.keywords.contains(where: { text.contains($0) }) ? entry.trigger : nil
         }
 
-        var severity = Self.severityCues.first { entry in
-            entry.keywords.contains { text.contains($0) }
-        }?.severity ?? 4
-        // Mentioning a rescue medication implies a meaningful episode.
-        if !medications.isEmpty { severity = max(severity, 5) }
-        // "twice"/"multiple times" bumps it further.
-        if text.contains("twice") || text.contains("multiple times") || text.contains("again") {
-            severity = min(severity + 1, 10)
-        }
+        // Patient-stated only — never inferred from symptom wording.
+        let severity = Self.parseExplicitSeverity(from: text)
 
         // Medication effect, only when explicitly stated.
         var medicationHelped: Bool?
@@ -97,11 +174,11 @@ public struct MockIntelligence: IntelligenceService {
             }
         }
 
-        return HealthEvent(
+        var event = HealthEvent(
             timestamp: Self.applyOnset(to: timestamp, text: text),
             symptom: match?.label ?? "general discomfort",
             category: match?.category ?? .general,
-            bodyRegion: match?.region ?? .systemic,
+            bodyRegion: statedRegion ?? match?.region ?? .unspecified,
             severity: severity,
             duration: Self.parseDuration(from: text),
             triggers: triggers,
@@ -110,6 +187,9 @@ public struct MockIntelligence: IntelligenceService {
             transcript: transcript,
             source: .voice
         )
+        // Offline fallback: contextual phrasing for the top missing field.
+        event.suggestedFollowUp = FollowUpQuestion.questions(for: event).first?.prompt(for: event)
+        return event
     }
 
     /// Back-dates "this morning" / "last night" style onsets deterministically.
@@ -164,7 +244,7 @@ public struct MockIntelligence: IntelligenceService {
         let chief = "\(sorted.count) symptom episodes over \(insights.periodDays) days, predominantly \(topSymptoms)."
 
         let timeline = sorted.suffix(15).map { event in
-            var line = "\(df.string(from: event.timestamp)): \(event.symptom), severity \(event.severity)/10"
+            var line = "\(df.string(from: event.timestamp)): \(event.symptom), \(event.severity.map { "severity \($0)/10" } ?? "severity unrated")"
             if !event.medications.isEmpty { line += " — \(event.medications.joined(separator: ", "))" }
             if let aqi = event.environment?.aqi { line += " (AQI \(aqi))" }
             return line

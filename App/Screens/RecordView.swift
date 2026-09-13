@@ -2,10 +2,11 @@ import SwiftUI
 import SwiftData
 import HealthCore
 
-/// Voice-first entry: tap the mic, speak, watch the live transcript, save.
-/// If the note leaves high-value fields empty (did the med help? how long?),
-/// the app asks up to two targeted follow-ups — spoken aloud via ElevenLabs,
-/// always skippable, never blocking the save.
+/// Voice-first entry: tap the mic, speak, watch the transcript, save.
+/// If the note leaves high-value fields empty, the app asks up to two
+/// model-phrased follow-ups — spoken aloud (Elise / ElevenLabs), answered
+/// hands-free: it listens after asking and detects when you stop talking.
+/// Always skippable, never blocks the save.
 struct RecordView: View {
     @Environment(AppEnvironment.self) private var appEnvironment
     @Environment(\.modelContext) private var modelContext
@@ -18,6 +19,10 @@ struct RecordView: View {
         case followUp
     }
 
+    enum FollowUpStage {
+        case speaking, listening, thinking, manual
+    }
+
     @State private var phase: Phase = .idle
     @State private var transcript = ""
     @State private var extracted: HealthEvent?
@@ -28,7 +33,15 @@ struct RecordView: View {
 
     // Follow-up state
     @State private var pendingEvent: HealthEvent?
-    @State private var currentQuestion: FollowUpQuestion?
+    @State private var currentQuestionText: String?
+    @State private var currentQuestionKind: String?
+    /// Kinds already asked (answered OR skipped) — never re-ask the same field.
+    @State private var askedKinds: Set<String> = []
+    @State private var followUpStage: FollowUpStage = .manual
+    /// Set only when Submit is tapped mid-listen; the stream's end then
+    /// advances. A stream that ends any other way (recognizer finalized on a
+    /// pause, engine error) must NOT advance — only Submit ever does.
+    @State private var followUpSubmitRequested = false
     @State private var followUpAnswer = ""
     @State private var questionsAsked = 0
     @State private var loggedAt = Date()
@@ -41,7 +54,7 @@ struct RecordView: View {
             VStack(spacing: 20) {
                 Spacer(minLength: 8)
 
-                if phase == .followUp, let question = currentQuestion {
+                if phase == .followUp, let question = currentQuestionText {
                     followUpCard(question)
                 } else {
                     micButton
@@ -94,61 +107,92 @@ struct RecordView: View {
 
     // MARK: - Follow-up UI
 
-    private func followUpCard(_ question: FollowUpQuestion) -> some View {
+    private func followUpCard(_ question: String) -> some View {
         VStack(spacing: 16) {
             Label("Quick follow-up", systemImage: "waveform.badge.mic")
                 .font(.rounded(.caption, weight: .semibold))
                 .foregroundStyle(Color.brandTeal)
 
-            Text(question.prompt)
+            Text(question)
                 .font(.rounded(.title3, weight: .semibold))
                 .multilineTextAlignment(.center)
                 .accessibilityIdentifier("followup.question")
 
             HStack(spacing: 12) {
                 Button {
-                    phase == .recording ? finishRecording() : startRecording()
+                    if followUpStage == .listening {
+                        finishFollowUpTurn()
+                    } else {
+                        followUpStage = .listening
+                        startRecording()
+                    }
                 } label: {
-                    Image(systemName: "mic.fill")
+                    Image(systemName: followUpStage == .listening ? "stop.fill" : "mic.fill")
                         .font(.system(size: 20))
                         .foregroundStyle(.white)
                         .frame(width: 52, height: 52)
-                        .background(Circle().fill(Color.brandTeal))
+                        .background(Circle().fill(followUpStage == .listening ? Color.red : Color.brandTeal))
                 }
+                .disabled(followUpStage == .thinking)
                 .accessibilityIdentifier("followup.mic")
 
-                TextField("Answer…", text: $followUpAnswer, axis: .vertical)
+                TextField("…or type your answer", text: $followUpAnswer, axis: .vertical)
                     .font(.rounded(.body))
                     .lineLimit(1...3)
                     .padding(10)
                     .background(.background, in: RoundedRectangle(cornerRadius: 12))
                     .accessibilityIdentifier("followup.answer")
+                    .onSubmit { submitFollowUp() }
             }
 
-            HStack(spacing: 12) {
-                Button("Skip") {
-                    Task { await advanceFollowUps(merging: nil) }
+            Button {
+                submitFollowUp()
+            } label: {
+                Group {
+                    if followUpStage == .thinking {
+                        ProgressView().tint(.white)
+                    } else {
+                        Text("Submit")
+                            .font(.rounded(.headline, weight: .semibold))
+                    }
                 }
-                .buttonStyle(.bordered)
-                .accessibilityIdentifier("followup.skip")
-
-                Button("Submit") {
-                    Task { await advanceFollowUps(merging: followUpAnswer) }
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(followUpAnswer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                .accessibilityIdentifier("followup.submit")
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 10)
             }
+            .buttonStyle(.borderedProminent)
+            .disabled(followUpStage == .thinking)
+            .accessibilityIdentifier("followup.submit")
         }
         .padding(18)
         .background(.background, in: RoundedRectangle(cornerRadius: 16))
     }
 
+    /// Submit ends the turn — and ONLY Submit. While listening it flags the
+    /// intent and stops the transcriber; the stream's end then advances with
+    /// the final text (cloud STT arrives after stop). Otherwise it advances
+    /// with whatever is in the field. An empty answer counts as a skip.
+    private func submitFollowUp() {
+        if followUpStage == .listening {
+            followUpSubmitRequested = true
+            followUpStage = .thinking
+            transcriber?.stop()
+        } else {
+            Task { await advanceFollowUps(merging: followUpAnswer) }
+        }
+    }
+
+    private func finishFollowUpTurn() {
+        // Mic stop: end the listen without submitting; the stream's end drops
+        // us back to manual with the captured text still in the field.
+        followUpStage = .thinking
+        transcriber?.stop()
+    }
+
     private var statusLine: String {
         switch phase {
-        case .idle: "Tap to record — or type below"
+        case .idle: "Tap to record"
         case .recording: "Listening… tap to stop"
-        case .review: "Review and save"
+        case .review: transcript.isEmpty ? "Transcribing…" : "Review and save"
         case .followUp: ""
         }
     }
@@ -206,30 +250,77 @@ struct RecordView: View {
 
     private func startRecording() {
         errorMessage = nil
-        if phase != .followUp {
+        let intoFollowUp = currentQuestionText != nil
+        if !intoFollowUp {
             transcript = ""
             loggedAt = Date()
             phase = .recording
         }
+        // No silence auto-stop: the turn ends when the user taps Submit
+        // (or the mic's stop button).
         let transcriber = appEnvironment.makeTranscriber()
         self.transcriber = transcriber
-        let intoFollowUp = currentQuestion != nil
         listenTask = Task {
             do {
                 for try await partial in transcriber.transcribe() {
                     if intoFollowUp { followUpAnswer = partial } else { transcript = partial }
                 }
-                if phase == .recording { phase = .review }
+                if intoFollowUp {
+                    let answer = followUpAnswer.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if followUpSubmitRequested {
+                        followUpSubmitRequested = false
+                        // Fresh task: advanceFollowUps cancels listenTask,
+                        // which is what's running this continuation.
+                        Task { await advanceFollowUps(merging: answer.isEmpty ? nil : answer) }
+                    } else {
+                        // Stream ended on its own (recognizer pause-finalized,
+                        // mic stop tapped) — keep the text, wait for Submit.
+                        followUpStage = .manual
+                    }
+                } else if phase == .recording {
+                    phase = .review
+                }
             } catch {
-                errorMessage = error.localizedDescription
+                if intoFollowUp {
+                    // STT hiccup on a follow-up: if Submit was already tapped,
+                    // advance with whatever text we have; otherwise just fall
+                    // back to manual and wait for the user.
+                    let answer = followUpAnswer.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if followUpSubmitRequested {
+                        followUpSubmitRequested = false
+                        Task { await advanceFollowUps(merging: answer.isEmpty ? nil : answer) }
+                    } else {
+                        followUpStage = .manual
+                    }
+                    return
+                }
+                // If we already captured text, a trailing recognizer error is
+                // noise — keep the transcript and stay quiet.
+                if transcript.isEmpty {
+                    let nsError = error as NSError
+                    if nsError.domain.contains("SFSpeech") || nsError.domain.hasPrefix("kAF")
+                        || nsError.localizedDescription.localizedCaseInsensitiveContains("recognizer") {
+                        errorMessage = "Voice input isn't available here — type your note below instead."
+                    } else {
+                        errorMessage = error.localizedDescription
+                    }
+                }
                 if phase == .recording { phase = transcript.isEmpty ? .idle : .review }
             }
         }
     }
 
     private func finishRecording() {
-        stopListening()
+        // Ask the transcriber to stop, but DON'T cancel the listen task:
+        // cloud transcribers (Simulator/ElevenLabs) deliver the final text
+        // after stop. Safety timeout cancels a hung stream.
+        transcriber?.stop()
         if phase == .recording { phase = .review }
+        let task = listenTask
+        Task {
+            try? await Task.sleep(nanoseconds: 30_000_000_000)
+            task?.cancel()
+        }
     }
 
     private func stopListening() {
@@ -238,7 +329,7 @@ struct RecordView: View {
         listenTask = nil
     }
 
-    // MARK: - Save + follow-up loop
+    // MARK: - Save + conversational follow-up loop
 
     private func save() {
         stopListening()
@@ -256,19 +347,26 @@ struct RecordView: View {
     }
 
     private func advanceFollowUps(merging answer: String?) async {
+        guard let question = currentQuestionText, var event = pendingEvent else { return }
         prompter?.stop()
         stopListening()
-        guard let question = currentQuestion, var event = pendingEvent else { return }
         questionsAsked += 1
-        currentQuestion = nil
+        if let kind = currentQuestionKind { askedKinds.insert(kind) }
+        currentQuestionKind = nil
+        currentQuestionText = nil
+        followUpStage = .thinking
+        phase = .followUp  // keep the card up while thinking
 
         if let answer, !answer.isEmpty {
+            currentQuestionText = question  // keep question visible during merge
+            followUpStage = .thinking
             // One code path: append the Q/A to the transcript and re-extract the
             // whole event so every field can benefit from the new information.
-            let combined = event.transcript + "\nFollow-up — \(question.prompt)\nPatient answer: \(answer)"
+            let combined = event.transcript + "\nFollow-up — \(question)\nPatient answer: \(answer)"
             event = (try? await appEnvironment.intelligence.extractEvent(from: combined, at: loggedAt))
                 ?? previewIntelligence.extractEvent(from: combined, at: loggedAt)
             pendingEvent = event
+            currentQuestionText = nil
         }
         followUpAnswer = ""
         await presentNextFollowUpOrFinish()
@@ -276,18 +374,56 @@ struct RecordView: View {
 
     private func presentNextFollowUpOrFinish() async {
         guard let event = pendingEvent else { return }
-        let remaining = FollowUpQuestion.questions(for: event)
-        if questionsAsked < 2, let next = remaining.first {
-            currentQuestion = next
-            phase = .followUp
-            // Speak the question via ElevenLabs — pure garnish; failures are silent.
-            if let key = appEnvironment.elevenLabsKey {
-                let prompter = self.prompter ?? VoicePrompter(apiKey: key)
-                self.prompter = prompter
-                Task { await prompter.speak(next.prompt) }
-            }
-        } else {
+        let missing = FollowUpQuestion.questions(for: event)
+        guard questionsAsked < 2,
+              let template = missing.first(where: { !askedKinds.contains(questionKind($0)) }) else {
             await finalize(event)
+            return
+        }
+        // Model-phrased question when it targets the field we're asking about
+        // (keeps phrasing conversational); template phrasing otherwise, so a
+        // stray off-topic question can never mislabel the answer.
+        let modelQuestion = (template == missing.first ? event.suggestedFollowUp : nil)
+            .flatMap { questionMatchesTopic($0, template) ? $0 : nil }
+        let text = modelQuestion ?? template.prompt(for: event)
+        currentQuestionKind = questionKind(template)
+        currentQuestionText = text
+        phase = .followUp
+        followUpStage = .speaking
+
+        // Speak, then open the mic hands-free (unless in deterministic test mode).
+        if let key = appEnvironment.elevenLabsKey {
+            let prompter = self.prompter ?? VoicePrompter(apiKey: key)
+            self.prompter = prompter
+            await prompter.speak(text)
+        }
+        guard currentQuestionText == text else { return }  // skipped mid-speech
+        if appEnvironment.autoConversation {
+            followUpStage = .listening
+            startRecording()
+        } else {
+            followUpStage = .manual
+        }
+    }
+
+    /// Loose topical check that a model-phrased question actually asks about
+    /// the field the completeness check selected.
+    private func questionMatchesTopic(_ text: String, _ template: FollowUpQuestion) -> Bool {
+        let t = text.lowercased()
+        return switch template {
+        case .bodyRegion: t.contains("where") || t.contains("which") || t.contains("side") || t.contains("part")
+        case .severity: t.contains("10") || t.contains("how bad") || t.contains("scale") || t.contains("rate") || t.contains("severe")
+        case .medicationEffect: t.contains("help") || t.contains("relie") || t.contains("work") || t.contains("better") || t.contains("ease")
+        case .duration: t.contains("long") || t.contains("last") || t.contains("still")
+        }
+    }
+
+    private func questionKind(_ question: FollowUpQuestion) -> String {
+        switch question {
+        case .bodyRegion: "region"
+        case .severity: "severity"
+        case .medicationEffect: "medication"
+        case .duration: "duration"
         }
     }
 
@@ -312,13 +448,14 @@ struct ExtractedPreview: View {
                 .font(.rounded(.caption, weight: .semibold))
                 .foregroundStyle(Color.brandTeal)
 
+            // No severity badge here: the rating is patient-stated and isn't
+            // known until the follow-up is answered.
             HStack(spacing: 8) {
-                SeverityBadge(severity: event.severity)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(event.symptom.capitalized)
                         .font(.rounded(.body, weight: .semibold))
                     HStack(spacing: 6) {
-                        Chip(text: event.bodyRegion == .systemic ? "General" : event.bodyRegion.displayName, tint: .brandTeal)
+                        Chip(text: event.bodyRegion.displayName, tint: .brandTeal)
                         if !event.medications.isEmpty {
                             Chip(text: "💊 \(event.medications[0])", tint: .purple)
                         }

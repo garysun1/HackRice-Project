@@ -35,6 +35,8 @@ case "${1:-}" in
     ;;
   launch)
     shift
+    # Always relaunch fresh — a running instance keeps its OLD launch flags.
+    xcrun simctl terminate "$(udid)" "$BUNDLE_ID" 2>/dev/null || true
     xcrun simctl launch "$(udid)" "$BUNDLE_ID" "$@"
     ;;
   shot)

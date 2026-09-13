@@ -18,12 +18,14 @@ public struct Insights: Sendable {
         return max(calendar.dateComponents([.day], from: first.timestamp, to: last.timestamp).day ?? 0, 1)
     }
 
+    /// Over patient-rated episodes only; unrated ones don't skew the mean.
     public var meanSeverity: Double {
-        guard !events.isEmpty else { return 0 }
-        return Double(events.map(\.severity).reduce(0, +)) / Double(events.count)
+        let rated = events.compactMap(\.severity)
+        guard !rated.isEmpty else { return 0 }
+        return Double(rated.reduce(0, +)) / Double(rated.count)
     }
 
-    public var severeCount: Int { events.filter { $0.severity >= 7 }.count }
+    public var severeCount: Int { events.filter { ($0.severity ?? 0) >= 7 }.count }
 
     public var episodesPerWeek: Double {
         guard periodDays > 0 else { return 0 }

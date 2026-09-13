@@ -41,6 +41,9 @@ final class AppEnvironment {
     let appointmentProvider: any AppointmentProvider
     /// ElevenLabs key for spoken follow-up questions (nil → text-only).
     let elevenLabsKey: String?
+    /// Hands-free conversational follow-ups (spoken question → auto-listen).
+    /// Disabled in UI tests so the manual tap path stays deterministic.
+    let autoConversation: Bool
 
     init(arguments: [String] = ProcessInfo.processInfo.arguments) {
         self.isDemoMode = arguments.contains("-demoMode")
@@ -69,9 +72,18 @@ final class AppEnvironment {
             ? DemoAppointmentProvider()
             : CalendarAppointmentProvider()
         self.elevenLabsKey = arguments.contains("--mock-intelligence") ? nil : Secrets.elevenLabsAPIKey
+        self.autoConversation = !arguments.contains("--mock-intelligence")
     }
 
-    func makeTranscriber() -> any Transcriber {
-        useMockSpeech ? MockTranscriber() : LiveTranscriber()
+    func makeTranscriber(autoStopOnSilence: Bool = false) -> any Transcriber {
+        if useMockSpeech { return MockTranscriber() }
+        #if targetEnvironment(simulator)
+        // Apple's speech engine can't initialize in the Simulator; use
+        // ElevenLabs Scribe (cloud STT) there when a key is available.
+        if let key = elevenLabsKey {
+            return ElevenLabsTranscriber(apiKey: key, autoStopOnSilence: autoStopOnSilence)
+        }
+        #endif
+        return LiveTranscriber(autoStopOnSilence: autoStopOnSilence)
     }
 }

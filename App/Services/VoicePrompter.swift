@@ -9,15 +9,17 @@ final class VoicePrompter: NSObject, AVAudioPlayerDelegate, @unchecked Sendable 
     private var player: AVAudioPlayer?
     private var finished: CheckedContinuation<Void, Never>?
 
-    /// "Rachel" — ElevenLabs' default premade voice: warm, clear, nurse-adjacent.
-    private let voiceID = "21m00Tcm4TlvDq8ikWAM"
+    /// "Elise — Warm, Natural and Engaging" (ElevenLabs voice library):
+    /// warm clinical register without the stock-AI sound.
+    private let voiceID = "EST9Ui6982FZPSi7gCHi"
 
     init(apiKey: String) {
         self.apiKey = apiKey
     }
 
     /// Fetches and plays the spoken question; returns when playback ends
-    /// (or immediately on any failure).
+    /// (or immediately on any failure). Uses flash for lowest latency —
+    /// questions are dynamic now, so there's nothing to cache.
     func speak(_ text: String) async {
         guard let url = URL(string: "https://api.elevenlabs.io/v1/text-to-speech/\(voiceID)?output_format=mp3_44100_128") else { return }
         var req = URLRequest(url: url)
@@ -27,7 +29,12 @@ final class VoicePrompter: NSObject, AVAudioPlayerDelegate, @unchecked Sendable 
         req.timeoutInterval = 15
         req.httpBody = try? JSONSerialization.data(withJSONObject: [
             "text": text,
-            "model_id": "eleven_turbo_v2_5"
+            "model_id": "eleven_flash_v2_5",
+            "voice_settings": [
+                "stability": 0.55,
+                "similarity_boost": 0.8,
+                "speed": 1.04
+            ]
         ])
 
         guard let (data, response) = try? await URLSession.shared.data(for: req),

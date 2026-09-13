@@ -60,9 +60,13 @@ public enum AsthmaPersona {
             guard rng.chance(pEpisode) else { continue }
 
             let severity: Int = {
-                var s = 3 + Int(rng.next(upperBound: 3)) // 3–5 baseline
-                if aqi > 130 { s += 3 } else if aqi > 100 { s += 2 }
-                if sleep < 6.0 { s += 1 }
+                // 1–5 baseline with randomized environmental bumps: the AQI
+                // correlation stays visible in aggregate, but individual days
+                // spread across the whole 1–9 range instead of piling at 5–8.
+                var s = 1 + Int(rng.next(upperBound: 5))
+                if aqi > 130 { s += 2 + Int(rng.next(upperBound: 3)) }
+                else if aqi > 100 { s += Int(rng.next(upperBound: 3)) }
+                if sleep < 6.0 { s += Int(rng.next(upperBound: 2)) }
                 return min(s, 9)
             }()
 

@@ -4,8 +4,6 @@ import HealthCore
 
 struct TimelineView: View {
     @Query(sort: \StoredEvent.timestamp, order: .reverse) private var events: [StoredEvent]
-    @State private var showingRecord = false
-
     // Declaration order = segment order: Body first (left), and the default.
     enum ViewMode: String, CaseIterable, Identifiable {
         case body = "Body"
@@ -61,34 +59,9 @@ struct TimelineView: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            .overlay(alignment: .bottomTrailing) {
-                recordButton
-            }
-            .sheet(isPresented: $showingRecord) {
-                RecordView()
-            }
         }
     }
 
-    private var recordButton: some View {
-        Button {
-            showingRecord = true
-        } label: {
-            ZStack {
-                Circle()
-                    .fill(Color.brandTeal)
-                    .frame(width: 62, height: 62)
-                    .shadow(color: Color.brandTeal.opacity(0.4), radius: 10, y: 4)
-                Image(systemName: "mic.fill")
-                    .font(.system(size: 24))
-                    .foregroundStyle(.white)
-            }
-        }
-        .padding(.trailing, 20)
-        .padding(.bottom, 12)
-        .accessibilityLabel("Record a new entry")
-        .accessibilityIdentifier("timeline.record")
-    }
 
     private var emptyState: some View {
         ContentUnavailableView(
@@ -104,7 +77,7 @@ struct EventRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            SeverityBadge(severity: event.severity)
+            SeverityBadge(severity: event.ratedSeverity)
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
@@ -142,15 +115,15 @@ struct EventRow: View {
 }
 
 struct SeverityBadge: View {
-    let severity: Int
+    let severity: Int?
 
     var body: some View {
-        Text("\(severity)")
+        Text(severity.map(String.init) ?? "–")
             .font(.rounded(.subheadline, weight: .bold))
             .foregroundStyle(.white)
             .frame(width: 32, height: 32)
             .background(Color.severity(severity), in: Circle())
-            .accessibilityLabel("Severity \(severity) out of 10")
+            .accessibilityLabel(severity.map { "Severity \($0) out of 10" } ?? "Severity not rated")
     }
 }
 

@@ -6,13 +6,26 @@ enum IntelligencePrompts {
 
     static let extractionSystem = """
     You extract structured health events from short patient voice notes for a personal \
-    health timeline. Be faithful to what was said; do not invent details. Severity: mild \
-    language ~2-3, unqualified symptoms ~4-5, rescue medication use or strong language \
-    ~6-8, emergency language ~9-10. onset_hours_ago: convert phrases like "this morning" \
+    health timeline. Be faithful to what was said; do not invent details. severity: \
+    NEVER infer it from symptom wording — it is the patient's own rating. Set it only \
+    when they explicitly self-rate: a number ("a 7", "8 out of 10") or an answer to a \
+    how-bad follow-up (map word answers like "pretty bad" or "barely noticed it" onto \
+    1-10). Otherwise null and the app will ask. body_region: the most specific region the note \
+    supports; use left/right only when the side is stated — if a limb symptom has no \
+    side ("my knee hurts"), or the location is unstated, or the symptom is whole-body \
+    (fatigue, anxiety), return null and the app will ask. onset_hours_ago: convert phrases like "this morning" \
     or "last night" into hours before the current time provided; null if the event is \
     happening now or no time is stated. medication_helped: only true/false when relief or \
     lack of relief is explicitly stated, else null. Follow-up Q/A pairs appended to a note \
-    refine the same single event.
+    refine the same single event. follow_up_question: ONE short spoken question (under 15 \
+    words, natural conversational phrasing referencing what they said). Pick the target \
+    by this STRICT order — do not skip ahead: (1) if body_region is null, ask where (or \
+    which side, for a sideless limb symptom); (2) else if severity is null, you MUST ask \
+    how bad it was on a 1-to-10 scale, tied to their words ("How bad was the tightness, \
+    1 to 10?") — never ask about medication or anything else while severity is null; \
+    (3) else if medication_helped is null and a medication was mentioned, ask whether it \
+    helped; (4) else if duration is null, ask how long it lasted. null ONLY when every \
+    one of those fields is filled or the patient already declined to answer it.
     """
 
     static let briefingSystem = """
@@ -58,7 +71,7 @@ enum IntelligencePrompts {
         }
 
         let episodeLines = sorted.suffix(20).map { e in
-            var line = "\(df.string(from: e.timestamp)): \(e.symptom) (\(e.category.rawValue), \(e.bodyRegion.rawValue)), severity \(e.severity)/10"
+            var line = "\(df.string(from: e.timestamp)): \(e.symptom) (\(e.category.rawValue), \(e.bodyRegion.rawValue)), \(e.severity.map { "severity \($0)/10" } ?? "severity unrated")"
             if !e.medications.isEmpty {
                 line += ", meds: \(e.medications.joined(separator: "; "))"
                 if let helped = e.medicationHelped { line += helped ? " (helped)" : " (did not help)" }
@@ -79,15 +92,20 @@ enum IntelligencePrompts {
         "properties": [
             "symptom": ["type": "string", "description": "Primary symptom in 1-3 lowercase words, e.g. 'chest tightness'"],
             "symptom_category": ["type": "string", "enum": SymptomCategory.allCases.map(\.rawValue)],
-            "body_region": ["type": "string", "enum": BodyRegion.allCases.map(\.rawValue), "description": "Anatomical location; 'systemic' for whole-body symptoms like fatigue"],
-            "severity": ["type": "integer", "description": "1 (barely noticeable) to 10 (worst imaginable), judged from language and medication use"],
+            "body_region": [
+                "type": ["string", "null"],
+                "enum": BodyRegion.allCases.filter { $0 != .unspecified }.map(\.rawValue) as [Any] + [NSNull()],
+                "description": "Most specific anatomical location; null when unclear, side unstated, or whole-body"
+            ],
+            "severity": ["type": ["integer", "null"], "description": "1-10 ONLY when the patient explicitly self-rates or answers a how-bad follow-up; null otherwise — never inferred from wording"],
             "onset_hours_ago": ["type": ["number", "null"], "description": "Hours before current time the symptom started, resolved from phrases like 'this morning'; null if now/unstated"],
             "duration_minutes": ["type": ["integer", "null"], "description": "How long the symptom lasted, if stated"],
             "triggers": ["type": "array", "items": ["type": "string", "enum": Trigger.allCases.map(\.rawValue)], "description": "Suspected triggers actually indicated by the note"],
             "medications": ["type": "array", "items": ["type": "string"], "description": "Medications mentioned, normalized, e.g. 'albuterol (rescue inhaler)'"],
-            "medication_helped": ["type": ["boolean", "null"], "description": "true/false only if relief or lack of relief is explicitly stated"]
+            "medication_helped": ["type": ["boolean", "null"], "description": "true/false only if relief or lack of relief is explicitly stated"],
+            "follow_up_question": ["type": ["string", "null"], "description": "One concise spoken follow-up (<15 words) for the most valuable missing field, or null"]
         ],
-        "required": ["symptom", "symptom_category", "body_region", "severity", "onset_hours_ago", "duration_minutes", "triggers", "medications", "medication_helped"],
+        "required": ["symptom", "symptom_category", "body_region", "severity", "onset_hours_ago", "duration_minutes", "triggers", "medications", "medication_helped", "follow_up_question"],
         "additionalProperties": false
     ] }
 
@@ -116,13 +134,14 @@ enum IntelligencePrompts {
 struct ExtractionPayload: Decodable {
     let symptom: String
     let symptomCategory: String
-    let bodyRegion: String
-    let severity: Int
+    let bodyRegion: String?
+    let severity: Int?
     let onsetHoursAgo: Double?
     let durationMinutes: Int?
     let triggers: [String]
     let medications: [String]
     let medicationHelped: Bool?
+    let followUpQuestion: String?
 
     enum CodingKeys: String, CodingKey {
         case symptom, severity, triggers, medications
@@ -131,15 +150,25 @@ struct ExtractionPayload: Decodable {
         case onsetHoursAgo = "onset_hours_ago"
         case durationMinutes = "duration_minutes"
         case medicationHelped = "medication_helped"
+        case followUpQuestion = "follow_up_question"
     }
 
     func toEvent(transcript: String, loggedAt: Date) -> HealthEvent {
         let occurred = onsetHoursAgo.map { loggedAt.addingTimeInterval(-$0 * 3600) } ?? loggedAt
-        return HealthEvent(
+        // The model occasionally guesses a side while simultaneously asking
+        // which side it was — trust the question: if it's still asking about
+        // the side, the location isn't resolved yet.
+        let questionAsksSide = followUpQuestion.map {
+            let q = $0.lowercased()
+            return q.contains("which side") || q.contains("left or right")
+        } ?? false
+        var event = HealthEvent(
             timestamp: occurred,
             symptom: symptom,
             category: SymptomCategory(rawValue: symptomCategory) ?? .general,
-            bodyRegion: BodyRegion(rawValue: bodyRegion) ?? .systemic,
+            bodyRegion: questionAsksSide
+                ? .unspecified
+                : bodyRegion.map(BodyRegion.canonical(from:)) ?? .unspecified,
             severity: severity,
             duration: durationMinutes.map { TimeInterval($0 * 60) },
             triggers: triggers.compactMap(Trigger.init(rawValue:)),
@@ -148,6 +177,8 @@ struct ExtractionPayload: Decodable {
             transcript: transcript,
             source: .voice
         )
+        event.suggestedFollowUp = followUpQuestion
+        return event
     }
 }
 

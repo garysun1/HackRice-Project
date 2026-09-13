@@ -10,6 +10,16 @@ final class LiveTranscriber: NSObject, Transcriber, @unchecked Sendable {
     private let engine = AVAudioEngine()
     private var request: SFSpeechAudioBufferRecognitionRequest?
     private var task: SFSpeechRecognitionTask?
+    /// Set when the user intentionally stops; any recognizer error after this
+    /// point is post-stop noise ("no speech detected" etc.), not a failure.
+    private var stopping = false
+    /// Hands-free mode: end the turn automatically after end-of-speech silence.
+    private let autoStopOnSilence: Bool
+    private var vad = VoiceActivityDetector()
+
+    init(autoStopOnSilence: Bool = false) {
+        self.autoStopOnSilence = autoStopOnSilence
+    }
 
     enum TranscriberError: LocalizedError {
         case notAuthorized
@@ -59,8 +69,12 @@ final class LiveTranscriber: NSObject, Transcriber, @unchecked Sendable {
 
         let input = engine.inputNode
         let format = input.outputFormat(forBus: 0)
-        input.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
+        input.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
             request.append(buffer)
+            guard let self, self.autoStopOnSilence, !self.stopping else { return }
+            if self.vad.shouldStop(after: buffer) {
+                DispatchQueue.main.async { self.stop() }
+            }
         }
 
         engine.prepare()
@@ -74,9 +88,10 @@ final class LiveTranscriber: NSObject, Transcriber, @unchecked Sendable {
                 }
             }
             if let error {
-                // Cancellation after stop() is expected; surface everything else.
-                let isCancellation = (error as NSError).code == 301 || (error as NSError).code == 216
-                if isCancellation {
+                // After an intentional stop, or on cancellation codes, the
+                // recognizer's trailing error is expected — finish cleanly.
+                let code = (error as NSError).code
+                if self.stopping || code == 301 || code == 216 {
                     continuation.finish()
                 } else {
                     continuation.finish(throwing: error)
@@ -86,6 +101,7 @@ final class LiveTranscriber: NSObject, Transcriber, @unchecked Sendable {
     }
 
     func stop() {
+        stopping = true
         engine.stop()
         engine.inputNode.removeTap(onBus: 0)
         request?.endAudio()

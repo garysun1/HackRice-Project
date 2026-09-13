@@ -10,9 +10,10 @@ public protocol Transcriber: Sendable {
     func stop()
 }
 
-public final class MockTranscriber: Transcriber {
+public final class MockTranscriber: Transcriber, @unchecked Sendable {
     private let script: [String]
     private let interval: TimeInterval
+    private var continuation: AsyncThrowingStream<String, Error>.Continuation?
 
     /// Emits each element of `script` in order, `interval` seconds apart.
     public init(
@@ -35,6 +36,7 @@ public final class MockTranscriber: Transcriber {
         let script = self.script
         let interval = self.interval
         return AsyncThrowingStream { continuation in
+            self.continuation = continuation
             let task = Task {
                 for line in script {
                     try await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
@@ -46,5 +48,9 @@ public final class MockTranscriber: Transcriber {
         }
     }
 
-    public func stop() {}
+    /// Stopping mid-script ends the stream (mirrors real transcriber semantics:
+    /// after stop(), the stream finishes promptly).
+    public func stop() {
+        continuation?.finish()
+    }
 }

@@ -10,7 +10,7 @@ final class StoredEvent {
     var timestamp: Date
     var symptom: String
     var categoryRaw: String = SymptomCategory.general.rawValue
-    var bodyRegionRaw: String = BodyRegion.systemic.rawValue
+    var bodyRegionRaw: String = BodyRegion.unspecified.rawValue
     var severity: Int
     var duration: TimeInterval?
     var triggersRaw: [String] = []
@@ -27,7 +27,8 @@ final class StoredEvent {
         self.symptom = event.symptom
         self.categoryRaw = event.category.rawValue
         self.bodyRegionRaw = event.bodyRegion.rawValue
-        self.severity = event.severity
+        // 0 = unrated; keeps the column non-optional so no store migration.
+        self.severity = event.severity ?? 0
         self.duration = event.duration
         self.triggersRaw = event.triggers.map(\.rawValue)
         self.medications = event.medications
@@ -38,7 +39,9 @@ final class StoredEvent {
         self.pm25 = event.environment?.pm25
     }
 
-    var bodyRegion: BodyRegion { BodyRegion(rawValue: bodyRegionRaw) ?? .systemic }
+    var bodyRegion: BodyRegion { BodyRegion.canonical(from: bodyRegionRaw) }
+    /// Patient-stated rating; 0 in storage means unrated.
+    var ratedSeverity: Int? { severity == 0 ? nil : severity }
     var triggers: [Trigger] { triggersRaw.compactMap(Trigger.init(rawValue:)) }
 
     var asHealthEvent: HealthEvent {
@@ -48,7 +51,7 @@ final class StoredEvent {
             symptom: symptom,
             category: SymptomCategory(rawValue: categoryRaw) ?? .general,
             bodyRegion: bodyRegion,
-            severity: severity,
+            severity: severity == 0 ? nil : severity,
             duration: duration,
             triggers: triggers,
             medications: medications,

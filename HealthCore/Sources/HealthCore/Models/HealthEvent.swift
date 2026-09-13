@@ -19,7 +19,8 @@ public struct HealthEvent: Identifiable, Codable, Hashable, Sendable {
     /// Standardized anatomical location for the body map.
     public var bodyRegion: BodyRegion
     /// 1 (barely noticeable) … 10 (worst imaginable).
-    public var severity: Int
+    /// 1–10, patient-stated only — nil until they rate it (never inferred).
+    public var severity: Int?
     /// How long the symptom lasted, if mentioned.
     public var duration: TimeInterval?
     /// Standardized suspected triggers.
@@ -33,14 +34,17 @@ public struct HealthEvent: Identifiable, Codable, Hashable, Sendable {
     public var source: Source
     /// Environment at capture time, if available.
     public var environment: EnvironmentSnapshot?
+    /// Transient: a model-phrased spoken follow-up question targeting the most
+    /// valuable missing field (nil = note is complete). Not persisted.
+    public var suggestedFollowUp: String?
 
     public init(
         id: UUID = UUID(),
         timestamp: Date,
         symptom: String,
         category: SymptomCategory = .general,
-        bodyRegion: BodyRegion = .systemic,
-        severity: Int,
+        bodyRegion: BodyRegion = .unspecified,
+        severity: Int? = nil,
         duration: TimeInterval? = nil,
         triggers: [Trigger] = [],
         medications: [String] = [],
@@ -54,7 +58,7 @@ public struct HealthEvent: Identifiable, Codable, Hashable, Sendable {
         self.symptom = symptom
         self.category = category
         self.bodyRegion = bodyRegion
-        self.severity = min(max(severity, 1), 10)
+        self.severity = severity.map { min(max($0, 1), 10) }
         self.duration = duration
         self.triggers = triggers
         self.medications = medications

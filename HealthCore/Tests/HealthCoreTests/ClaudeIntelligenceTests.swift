@@ -64,7 +64,8 @@ import Testing
             at: Date()
         )
         #expect(!event.symptom.isEmpty)
-        #expect(event.severity >= 1 && event.severity <= 10)
+        // No explicit self-rating in the note → severity must stay nil (or a valid 1-10 if the model finds one)
+        #expect(event.severity.map { (1...10).contains($0) } ?? true)
         #expect(!event.medications.isEmpty)
     }
 }
