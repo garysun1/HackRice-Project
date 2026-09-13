@@ -114,4 +114,16 @@ final class AppEnvironment {
         await healthDataReady()
         return (try? await healthProvider.contributingSources()) ?? []
     }
+
+    /// Backs the Connections drill-down. Same readiness ordering as the metrics loader —
+    /// querying before authorization resolves would cache an empty source list.
+    func loadSourceContributions() async -> [SourceContribution] {
+        await healthDataReady()
+        do {
+            return try await healthProvider.sourceContributions()
+        } catch {
+            Self.log.error("sourceContributions failed: \(error.localizedDescription)")
+            return []
+        }
+    }
 }

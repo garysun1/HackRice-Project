@@ -8,8 +8,12 @@ public protocol HealthDataProvider: Sendable {
     func requestAuthorization() async throws
     /// Daily aggregates for the given range, newest last.
     func dailyMetrics(from start: Date, to end: Date) async throws -> [DailyMetrics]
-    /// Distinct contributing source names seen in the data, for the Connections screen.
+    /// Distinct contributing source names seen in the data.
     func contributingSources() async throws -> [String]
+    /// Per-source, per-data-type detail backing the Connections drill-down: which apps and
+    /// devices supplied which metrics, over what span. Sources appear only when they are
+    /// genuinely supplying data.
+    func sourceContributions() async throws -> [SourceContribution]
     /// Writes seeded samples into the backing store so the real read path can be
     /// exercised on a simulator or a fresh device. No-op for stores that can't accept writes.
     func seedDemoData(_ metrics: [DailyMetrics]) async throws
@@ -35,6 +39,10 @@ public final class MockHealthProvider: HealthDataProvider {
     }
 
     public func contributingSources() async throws -> [String] {
-        Set(metrics.flatMap { $0.attributedMetrics.map(\.sourceName) }).sorted()
+        try await sourceContributions().map(\.sourceName)
+    }
+
+    public func sourceContributions() async throws -> [SourceContribution] {
+        SourceContribution.from(metrics: metrics)
     }
 }

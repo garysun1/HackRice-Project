@@ -88,24 +88,163 @@ final class HealthKitProvider: HealthDataProvider, @unchecked Sendable {
     }
 
     func contributingSources() async throws -> [String] {
-        var names: Set<String> = []
-        let types: [HKSampleType] = [
-            HKQuantityType(.stepCount),
-            HKCategoryType(.sleepAnalysis),
-            HKQuantityType(.dietaryEnergyConsumed),
-            HKQuantityType(.restingHeartRate),
-            HKObjectType.workoutType()
-        ]
-        for type in types {
-            let sources: Set<HKSource> = try await withCheckedThrowingContinuation { continuation in
-                let query = HKSourceQuery(sampleType: type, samplePredicate: nil) { _, sources, error in
-                    if let error { continuation.resume(throwing: error) } else { continuation.resume(returning: sources ?? []) }
-                }
-                store.execute(query)
-            }
-            names.formUnion(sources.map(\.name))
+        try await sourceContributions().map(\.sourceName)
+    }
+
+    // MARK: - Per-source attribution
+
+    /// One source's value for one metric on one day.
+    private struct SourceDayValue {
+        let day: Date
+        let sourceName: String
+        let value: Double
+    }
+
+    /// Which apps and devices supplied which metrics, and over what span.
+    ///
+    /// Unlike `dailyMetrics(...)`, this deliberately does not collapse multiple
+    /// contributors into one name per day — that collapse is what made the old
+    /// `contributingSources()` unable to say *what* a given source actually provided.
+    func sourceContributions() async throws -> [SourceContribution] {
+        guard HKHealthStore.isHealthDataAvailable() else { return [] }
+        let end = Date()
+        let start = Calendar.current.date(byAdding: .day, value: -Self.maxLookbackDays, to: end) ?? end
+
+        var byKind: [MetricKind: [SourceDayValue]] = [:]
+        byKind[.steps] = try await perSourceQuantity(.stepCount, unit: .count(), options: .cumulativeSum, from: start, to: end)
+        byKind[.restingHeartRate] = try await perSourceQuantity(.restingHeartRate, unit: HKUnit.count().unitDivided(by: .minute()), options: .discreteAverage, from: start, to: end)
+        byKind[.dietaryEnergyKcal] = try await perSourceQuantity(.dietaryEnergyConsumed, unit: .kilocalorie(), options: .cumulativeSum, from: start, to: end)
+        byKind[.caffeineMg] = try await perSourceQuantity(.dietaryCaffeine, unit: .gramUnit(with: .milli), options: .cumulativeSum, from: start, to: end)
+        byKind[.sodiumMg] = try await perSourceQuantity(.dietarySodium, unit: .gramUnit(with: .milli), options: .cumulativeSum, from: start, to: end)
+        byKind[.waterML] = try await perSourceQuantity(.dietaryWater, unit: .literUnit(with: .milli), options: .cumulativeSum, from: start, to: end)
+        byKind[.sleepHours] = try await perSourceSleep(from: start, to: end)
+        byKind[.workoutMinutes] = try await perSourceWorkouts(from: start, to: end)
+
+        struct Accumulator {
+            var days: Set<Date> = []
+            var firstDay: Date?
+            var lastDay: Date?
+            var latestValue: Double?
         }
-        return names.sorted()
+
+        var table: [String: [MetricKind: Accumulator]] = [:]
+        for (kind, values) in byKind {
+            // Ascending, so the final assignment to `latestValue` really is the latest.
+            for entry in values.sorted(by: { $0.day < $1.day }) {
+                var accumulator = table[entry.sourceName]?[kind] ?? Accumulator()
+                accumulator.days.insert(entry.day)
+                if accumulator.firstDay == nil { accumulator.firstDay = entry.day }
+                accumulator.lastDay = entry.day
+                accumulator.latestValue = entry.value
+                table[entry.sourceName, default: [:]][kind] = accumulator
+            }
+        }
+
+        Self.log.info("found \(table.count) contributing source(s) in HealthKit")
+
+        return table
+            .map { sourceName, kinds in
+                SourceContribution(
+                    sourceName: sourceName,
+                    dataTypes: MetricKind.allCases.compactMap { kind in
+                        guard let accumulator = kinds[kind] else { return nil }
+                        return DataTypeContribution(
+                            kind: kind,
+                            dayCount: accumulator.days.count,
+                            firstDay: accumulator.firstDay,
+                            lastDay: accumulator.lastDay,
+                            latestValue: accumulator.latestValue
+                        )
+                    }
+                )
+            }
+            .sorted { $0.sourceName < $1.sourceName }
+    }
+
+    /// Daily totals split per contributing source, via `.separateBySource` — which lets
+    /// HealthKit do the grouping instead of us pulling every raw sample back.
+    private func perSourceQuantity(
+        _ id: HKQuantityTypeIdentifier,
+        unit: HKUnit,
+        options: HKStatisticsOptions,
+        from start: Date,
+        to end: Date
+    ) async throws -> [SourceDayValue] {
+        let type = HKQuantityType(id)
+        let predicate = HKQuery.predicateForSamples(withStart: start, end: end)
+
+        let collection: HKStatisticsCollection? = try await withCheckedThrowingContinuation { continuation in
+            let query = HKStatisticsCollectionQuery(
+                quantityType: type,
+                quantitySamplePredicate: predicate,
+                options: options.union(.separateBySource),
+                anchorDate: Calendar.current.startOfDay(for: start),
+                intervalComponents: DateComponents(day: 1)
+            )
+            query.initialResultsHandler = { _, results, error in
+                if let error { continuation.resume(throwing: error) } else { continuation.resume(returning: results) }
+            }
+            store.execute(query)
+        }
+
+        var out: [SourceDayValue] = []
+        collection?.enumerateStatistics(from: start, to: end) { stats, _ in
+            let day = Calendar.current.startOfDay(for: stats.startDate)
+            for source in stats.sources ?? [] {
+                let quantity = options.contains(.cumulativeSum)
+                    ? stats.sumQuantity(for: source)
+                    : stats.averageQuantity(for: source)
+                guard let quantity else { continue }
+                out.append(SourceDayValue(day: day, sourceName: source.name, value: quantity.doubleValue(for: unit)))
+            }
+        }
+        return out
+    }
+
+    private func perSourceSleep(from start: Date, to end: Date) async throws -> [SourceDayValue] {
+        let samples = try await samples(of: HKCategoryType(.sleepAnalysis), from: start, to: end)
+        var totals: [Date: [String: Double]] = [:]
+        for sample in samples {
+            guard let category = sample as? HKCategorySample,
+                  HKCategoryValueSleepAnalysis.allAsleepValues.map(\.rawValue).contains(category.value)
+            else { continue }
+            let day = Calendar.current.startOfDay(for: category.endDate)
+            let hours = category.endDate.timeIntervalSince(category.startDate) / 3600
+            let name = category.sourceRevision.source.name
+            totals[day, default: [:]][name, default: 0] += hours
+        }
+        return totals.flatMap { day, perSource in
+            perSource.map { SourceDayValue(day: day, sourceName: $0.key, value: $0.value) }
+        }
+    }
+
+    private func perSourceWorkouts(from start: Date, to end: Date) async throws -> [SourceDayValue] {
+        let samples = try await samples(of: HKObjectType.workoutType(), from: start, to: end)
+        var totals: [Date: [String: Double]] = [:]
+        for sample in samples {
+            guard let workout = sample as? HKWorkout else { continue }
+            let day = Calendar.current.startOfDay(for: workout.startDate)
+            let name = workout.sourceRevision.source.name
+            totals[day, default: [:]][name, default: 0] += workout.duration / 60
+        }
+        return totals.flatMap { day, perSource in
+            perSource.map { SourceDayValue(day: day, sourceName: $0.key, value: $0.value) }
+        }
+    }
+
+    private func samples(of type: HKSampleType, from start: Date, to end: Date) async throws -> [HKSample] {
+        let predicate = HKQuery.predicateForSamples(withStart: start, end: end)
+        return try await withCheckedThrowingContinuation { continuation in
+            let query = HKSampleQuery(
+                sampleType: type,
+                predicate: predicate,
+                limit: HKObjectQueryNoLimit,
+                sortDescriptors: nil
+            ) { _, samples, error in
+                if let error { continuation.resume(throwing: error) } else { continuation.resume(returning: samples ?? []) }
+            }
+            store.execute(query)
+        }
     }
 
     // MARK: - Demo seeding

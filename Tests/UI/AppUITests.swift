@@ -55,6 +55,43 @@ final class AppUITests: XCTestCase {
         )
     }
 
+    /// Walks all three levels of the Connections drill-down. Uses the mock provider
+    /// (`-demoMode` without `-healthkit`), so no HealthKit permission is involved and the
+    /// test is repeatable on any simulator.
+    @MainActor
+    func testConnectionsDrillDownToImportedData() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-demoMode", "--mock-speech", "-openTab", "connections"]
+        app.launch()
+
+        XCTAssertTrue(app.tabBars.buttons["Connections"].waitForExistence(timeout: 10))
+        app.tabBars.buttons["Connections"].tap()
+
+        // Level 1 — the three categories.
+        for category in ["general", "sleep", "fitness"] {
+            XCTAssertTrue(
+                app.descendants(matching: .any)["connections.category.\(category)"].waitForExistence(timeout: 5),
+                "Missing category row for \(category)"
+            )
+        }
+
+        // Level 2 — Fitness is supplied by Strava and Fitbit in the seeded persona.
+        app.descendants(matching: .any)["connections.category.fitness"].tap()
+        let strava = app.descendants(matching: .any)["connections.source.Strava"]
+        XCTAssertTrue(strava.waitForExistence(timeout: 5), "Strava should supply fitness data")
+
+        // Level 3 — Strava contributes workouts, and nothing else.
+        strava.tap()
+        XCTAssertTrue(
+            app.descendants(matching: .any)["connections.detail.workoutMinutes"].waitForExistence(timeout: 5),
+            "Strava detail should list its workout contribution"
+        )
+        XCTAssertFalse(
+            app.descendants(matching: .any)["connections.detail.sleepHours"].exists,
+            "Strava must not claim data it never supplied"
+        )
+    }
+
     @MainActor
     func testAppLaunchesWithAllTabs() throws {
         let app = XCUIApplication()
@@ -87,5 +124,40 @@ final class AppUITests: XCTestCase {
         // Sheet dismisses back to the timeline with the new entry present.
         XCTAssertTrue(app.buttons["timeline.record"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Chest Tightness"].firstMatch.exists)
+    }
+
+    @MainActor
+    func testTrendsTileGridExpands() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-demoMode", "--mock-speech", "-openTab", "trends"]
+        app.launch()
+        let tile = app.descendants(matching: .any)["trends.tile.airQuality"]
+        XCTAssertTrue(tile.waitForExistence(timeout: 20))
+        XCTAssertTrue(app.descendants(matching: .any)["trends.range"].exists)
+
+        let gridScreenshot = XCTAttachment(screenshot: app.screenshot())
+        gridScreenshot.name = "trends-grid-30D"
+        gridScreenshot.lifetime = .keepAlways
+        add(gridScreenshot)
+
+        for label in ["7D", "90D"] {
+            let segment = app.buttons[label]
+            XCTAssertTrue(segment.waitForExistence(timeout: 5))
+            segment.tap()
+            let screenshot = XCTAttachment(screenshot: app.screenshot())
+            screenshot.name = "trends-grid-\(label)"
+            screenshot.lifetime = .keepAlways
+            add(screenshot)
+        }
+        app.buttons["30D"].tap()
+
+        tile.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["trends.detail.rug"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.navigationBars["Air quality"].waitForExistence(timeout: 5))
+
+        let detailScreenshot = XCTAttachment(screenshot: app.screenshot())
+        detailScreenshot.name = "trends-air-quality-detail"
+        detailScreenshot.lifetime = .keepAlways
+        add(detailScreenshot)
     }
 }

@@ -15,7 +15,7 @@ Appointments are 15 minutes; the months between them are where your health actua
 - **Trends** — symptom episodes overlaid on AQI and sleep. Our demo persona's asthma episodes cluster on high-AQI days at 3–4× the base rate, and the app says so in one sentence.
 - **Prep my visit** — one generator, two views: a clinician-style note (chief concerns, frequency/severity statistics, correlations, medication use, episode timeline) and a patient view (talking points, questions to ask). Exportable.
 - **Appointment awareness** — EventKit spots "Dr. Chen — Pulmonology, Monday" on your calendar and has the briefing ready.
-- **One integration, whole ecosystem** — Apple Health is the hub: Strava workouts, MyFitnessPal nutrition, Apple Watch heart data, and Fitbit (via Google Health's Aug 2026 Apple Health sync) all flow in, each credited to its source.
+- **One integration, whole ecosystem** — Apple Health is the hub: Strava workouts, MyFitnessPal nutrition, Apple Watch heart data, and Fitbit (via Google Health's Aug 2026 Apple Health sync) all flow in, each credited to its source. Connections groups them into **General / Sleep / Fitness Health**, and every source drills down to exactly what it imported — data types, day counts, date span, latest reading. Nothing is listed that isn't actually supplying data.
 
 Everything stays on-device. No accounts, no backend, no tracking.
 

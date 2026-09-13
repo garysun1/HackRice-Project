@@ -1,32 +1,44 @@
 import SwiftUI
 import HealthCore
 
-/// The integrations showcase: what's connected (with live source attribution),
-/// what's available with setup, and what's on the roadmap.
+/// Level 1 of the Connections drill-down: the three health categories, then the real
+/// non-health integrations.
+///
+/// Nothing aspirational is listed. A source appears only when it is genuinely supplying
+/// data — Interim has no direct API for Fitbit, Oura or Garmin, so they can only ever show
+/// up as sources detected inside Apple Health. Google Health is the single exception: it is
+/// a routing path the user configures on their phone, so it gets a row with instructions.
 struct ConnectionsView: View {
     @Environment(AppEnvironment.self) private var appEnvironment
-    @State private var sources: [String] = []
+    @State private var contributions: [SourceContribution] = []
+    @State private var isLoading = true
 
     var body: some View {
         NavigationStack {
             List {
                 Section {
-                    ConnectionRow(
-                        icon: "heart.fill",
-                        iconColor: .pink,
-                        title: "Apple Health",
-                        subtitle: "One hub for your whole ecosystem",
-                        status: .connected
-                    )
-                    if !sources.isEmpty {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Contributing sources")
-                                .font(.rounded(.caption, weight: .semibold))
-                                .foregroundStyle(.secondary)
-                            FlowChips(items: sources.map { sourceBadge($0) })
+                    ForEach(HealthDataCategory.allCases) { category in
+                        NavigationLink {
+                            CategoryConnectionsView(
+                                category: category,
+                                sources: contributions.supplying(category)
+                            )
+                        } label: {
+                            CategoryRow(
+                                category: category,
+                                sourceCount: contributions.supplying(category).count,
+                                isLoading: isLoading
+                            )
                         }
-                        .padding(.vertical, 4)
+                        .accessibilityIdentifier("connections.category.\(category.rawValue)")
                     }
+                } header: {
+                    Text("Your health data")
+                } footer: {
+                    Text("Apple Health is the hub — anything writing into it shows up here automatically, credited to the app or device that supplied it.")
+                }
+
+                Section {
                     ConnectionRow(
                         icon: "location.fill",
                         iconColor: .brandTeal,
@@ -42,31 +54,7 @@ struct ConnectionsView: View {
                         status: .connected
                     )
                 } header: {
-                    Text("Connected")
-                }
-
-                Section {
-                    ConnectionRow(
-                        icon: "figure.walk",
-                        iconColor: .green,
-                        title: "Fitbit — via Google Health",
-                        subtitle: "Google Health app → Profile → Partner apps → Apple Health",
-                        status: .available
-                    )
-                } header: {
-                    Text("Available")
-                } footer: {
-                    Text("As of Aug 2026, Google Health syncs Fitbit steps, sleep, heart rate, and workouts into Apple Health — Interim picks them up automatically.")
-                }
-
-                Section {
-                    ConnectionRow(icon: "circle.circle", iconColor: .gray, title: "Oura", subtitle: "Readiness & sleep scores", status: .comingSoon)
-                    ConnectionRow(icon: "bolt.heart", iconColor: .gray, title: "Whoop", subtitle: "Recovery & strain", status: .comingSoon)
-                    ConnectionRow(icon: "drop", iconColor: .gray, title: "Dexcom CGM", subtitle: "Glucose & metabolic health", status: .comingSoon)
-                    ConnectionRow(icon: "building.columns", iconColor: .gray, title: "MyChart records", subtitle: "Labs & medications via FHIR", status: .comingSoon)
-                    ConnectionRow(icon: "leaf", iconColor: .gray, title: "Pollen", subtitle: "Allergen forecasts", status: .comingSoon)
-                } header: {
-                    Text("Coming soon")
+                    Text("Also connected")
                 }
 
                 Section {
@@ -81,19 +69,50 @@ struct ConnectionsView: View {
             }
             .navigationTitle("Connections")
             .task {
-                sources = await appEnvironment.loadContributingSources()
+                contributions = await appEnvironment.loadSourceContributions()
+                isLoading = false
             }
         }
     }
+}
 
-    private func sourceBadge(_ source: String) -> String {
-        switch true {
-        case source.contains("Fitbit"), source.contains("Google"): "👟 Steps · \(source)"
-        case source.contains("Strava"): "🏃 Workouts · \(source)"
-        case source.contains("MyFitnessPal"): "🍎 Nutrition · \(source)"
-        case source.contains("Watch"): "❤️ Heart · \(source)"
-        default: "📊 \(source)"
+struct CategoryRow: View {
+    let category: HealthDataCategory
+    let sourceCount: Int
+    let isLoading: Bool
+
+    private var detail: String {
+        if isLoading { return "Checking…" }
+        return switch sourceCount {
+        case 0: "No sources yet"
+        case 1: "1 source"
+        default: "\(sourceCount) sources"
         }
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: category.systemImage)
+                .font(.system(size: 17))
+                .foregroundStyle(Color.brandTeal)
+                .frame(width: 34, height: 34)
+                .background(Color.brandTeal.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(category.displayName)
+                    .font(.rounded(.body, weight: .medium))
+                Text(category.subtitle)
+                    .font(.rounded(.caption))
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            Text(detail)
+                .font(.rounded(.caption, weight: .medium))
+                .foregroundStyle(sourceCount > 0 && !isLoading ? Color.brandTeal : .secondary)
+        }
+        .padding(.vertical, 2)
     }
 }
 
@@ -145,46 +164,5 @@ struct ConnectionRow: View {
             }
         }
         .padding(.vertical, 2)
-    }
-}
-
-/// Simple wrapping chip layout.
-struct FlowChips: View {
-    let items: [String]
-
-    var body: some View {
-        FlexibleHStack(spacing: 6) {
-            ForEach(items, id: \.self) { item in
-                Chip(text: item, tint: .brandTeal)
-            }
-        }
-    }
-}
-
-/// Minimal wrapping layout (iOS 16+ Layout protocol).
-struct FlexibleHStack: Layout {
-    var spacing: CGFloat = 6
-
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let width = proposal.width ?? 320
-        var x: CGFloat = 0, y: CGFloat = 0, rowHeight: CGFloat = 0
-        for subview in subviews {
-            let size = subview.sizeThatFits(.unspecified)
-            if x + size.width > width { x = 0; y += rowHeight + spacing; rowHeight = 0 }
-            x += size.width + spacing
-            rowHeight = max(rowHeight, size.height)
-        }
-        return CGSize(width: width, height: y + rowHeight)
-    }
-
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        var x = bounds.minX, y = bounds.minY, rowHeight: CGFloat = 0
-        for subview in subviews {
-            let size = subview.sizeThatFits(.unspecified)
-            if x + size.width > bounds.maxX { x = bounds.minX; y += rowHeight + spacing; rowHeight = 0 }
-            subview.place(at: CGPoint(x: x, y: y), proposal: .unspecified)
-            x += size.width + spacing
-            rowHeight = max(rowHeight, size.height)
-        }
     }
 }
