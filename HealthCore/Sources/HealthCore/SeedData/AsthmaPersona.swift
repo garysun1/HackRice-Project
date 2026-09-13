@@ -52,9 +52,9 @@ public enum AsthmaPersona {
             ))
 
             // --- Episodes: probability driven by AQI and sleep (the demo's correlation).
-            var pEpisode = 0.02
-            if aqi > 100 { pEpisode += 0.62 }
-            else if aqi > 80 { pEpisode += 0.10 }
+            var pEpisode = 0.015
+            if aqi > 100 { pEpisode += 0.70 }
+            else if aqi > 80 { pEpisode += 0.08 }
             if sleep < 6.0 { pEpisode += 0.10 }
 
             guard rng.chance(pEpisode) else { continue }
@@ -73,13 +73,20 @@ public enum AsthmaPersona {
             let minute = Int(rng.next(upperBound: 60))
             let timestamp = calendar.date(byAdding: .minute, value: hour * 60 + minute, to: day) ?? day
 
+            // Inhaler effectiveness: mostly helps, occasionally doesn't — the
+            // "didn't help" cases are what a pulmonologist most wants to see.
+            let inhalerHelped: Bool? = usedInhaler ? rng.chance(0.85) : nil
+
             events.append(HealthEvent(
                 timestamp: timestamp,
                 symptom: template.symptom,
+                category: .respiratory,
+                bodyRegion: .chest,
                 severity: severity,
                 duration: template.duration,
-                tags: template.tags,
+                triggers: template.triggers,
                 medications: usedInhaler ? ["albuterol (rescue inhaler)"] : [],
+                medicationHelped: inhalerHelped,
                 transcript: usedInhaler ? template.transcriptWithInhaler : template.transcript,
                 source: .seeded,
                 environment: EnvironmentSnapshot(
@@ -97,7 +104,7 @@ public enum AsthmaPersona {
     struct EpisodeTemplate {
         let symptom: String
         let duration: TimeInterval?
-        let tags: [String]
+        let triggers: [Trigger]
         /// Plausible local hours for this note (so "this morning" never lands at 7pm).
         let hourRange: ClosedRange<Int>
         let transcript: String
@@ -108,7 +115,7 @@ public enum AsthmaPersona {
         .init(
             symptom: "chest tightness",
             duration: 3600,
-            tags: ["outdoors"],
+            triggers: [.outdoorAir],
             hourRange: 10...18,
             transcript: "Chest felt tight for about an hour after walking outside.",
             transcriptWithInhaler: "Chest felt tight for about an hour after walking outside, used my rescue inhaler."
@@ -116,7 +123,7 @@ public enum AsthmaPersona {
         .init(
             symptom: "wheezing",
             duration: 1800,
-            tags: ["during/after activity"],
+            triggers: [.exercise],
             hourRange: 9...19,
             transcript: "Started wheezing about half an hour into my walk, had to slow down.",
             transcriptWithInhaler: "Started wheezing on my walk, had to stop and use my inhaler."
@@ -124,7 +131,7 @@ public enum AsthmaPersona {
         .init(
             symptom: "shortness of breath",
             duration: nil,
-            tags: ["morning"],
+            triggers: [],
             hourRange: 6...9,
             transcript: "Woke up short of breath this morning, took a while to settle.",
             transcriptWithInhaler: "Woke up short of breath this morning, used my rescue inhaler before it settled."
@@ -132,7 +139,7 @@ public enum AsthmaPersona {
         .init(
             symptom: "coughing",
             duration: 7200,
-            tags: ["night"],
+            triggers: [],
             hourRange: 21...23,
             transcript: "Coughing fit at night, maybe a couple hours before I could sleep.",
             transcriptWithInhaler: "Coughing badly at night, used the inhaler so I could get to sleep."
@@ -140,7 +147,7 @@ public enum AsthmaPersona {
         .init(
             symptom: "chest tightness",
             duration: nil,
-            tags: ["at work/school"],
+            triggers: [.stress],
             hourRange: 10...16,
             transcript: "Slight chest tightness sitting in class, mild but distracting.",
             transcriptWithInhaler: "Chest tightness during class got bad enough that I used my inhaler."

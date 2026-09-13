@@ -6,6 +6,16 @@ struct TimelineView: View {
     @Query(sort: \StoredEvent.timestamp, order: .reverse) private var events: [StoredEvent]
     @State private var showingRecord = false
 
+    // Declaration order = segment order: Body first (left), and the default.
+    enum ViewMode: String, CaseIterable, Identifiable {
+        case body = "Body"
+        case list = "List"
+        var id: String { rawValue }
+    }
+    // Body view is the default lens; `-listView` opens on the list (tests/demos).
+    @State private var viewMode: ViewMode =
+        ProcessInfo.processInfo.arguments.contains("-listView") ? .list : .body
+
     private var groupedByDay: [(day: Date, events: [StoredEvent])] {
         Dictionary(grouping: events) { Calendar.current.startOfDay(for: $0.timestamp) }
             .sorted { $0.key > $1.key }
@@ -17,6 +27,8 @@ struct TimelineView: View {
             Group {
                 if events.isEmpty {
                     emptyState
+                } else if viewMode == .body {
+                    BodyMapView(events: events)
                 } else {
                     List {
                         ForEach(groupedByDay, id: \.day) { group in
@@ -33,9 +45,16 @@ struct TimelineView: View {
                     .listStyle(.insetGrouped)
                 }
             }
-            .navigationTitle("Timeline")
+            .navigationTitle("Log")
             .navigationBarTitleDisplayMode(.large)
             .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Picker("View", selection: $viewMode) {
+                        ForEach(ViewMode.allCases) { Text($0.rawValue).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 160)
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Text("\(events.count) entries")
                         .font(.rounded(.caption))
@@ -104,13 +123,15 @@ struct EventRow: View {
 
                 HStack(spacing: 6) {
                     if !event.medications.isEmpty {
-                        Chip(text: "💊 \(event.medications[0])", tint: .purple)
+                        let med = event.medications[0]
+                        let effect = event.medicationHelped.map { $0 ? " ✓" : " ✗" } ?? ""
+                        Chip(text: "💊 \(med)\(effect)", tint: event.medicationHelped == false ? .red : .purple)
                     }
                     if let aqi = event.aqi {
                         Chip(text: "AQI \(aqi)", tint: aqi > 100 ? .red : (aqi > 50 ? .orange : .green))
                     }
-                    ForEach(event.tags.prefix(2), id: \.self) { tag in
-                        Chip(text: tag, tint: .gray)
+                    ForEach(event.triggers.prefix(2), id: \.self) { trigger in
+                        Chip(text: trigger.displayName, tint: .gray)
                     }
                 }
             }

@@ -18,7 +18,7 @@ struct RootView: View {
     var body: some View {
         TabView(selection: $selection) {
             TimelineView()
-                .tabItem { Label("Timeline", systemImage: "list.bullet.rectangle.portrait") }
+                .tabItem { Label("Log", systemImage: "waveform.and.mic") }
                 .tag(AppTab.timeline)
             TrendsView()
                 .tabItem { Label("Trends", systemImage: "chart.xyaxis.line") }

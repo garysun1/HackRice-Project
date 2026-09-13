@@ -39,11 +39,11 @@ public struct ClaudeIntelligence: IntelligenceService {
             "max_tokens": 2048,
             "output_config": ["effort": "low", "format": ["type": "json_schema", "schema": IntelligencePrompts.extractionSchema]],
             "system": IntelligencePrompts.extractionSystem,
-            "messages": [["role": "user", "content": transcript]]
+            "messages": [["role": "user", "content": IntelligencePrompts.extractionInput(transcript: transcript, now: timestamp)]]
         ]
 
         let payload: ExtractionPayload = try await request(body: body)
-        return payload.toEvent(transcript: transcript, at: timestamp)
+        return payload.toEvent(transcript: transcript, loggedAt: timestamp)
     }
 
     // MARK: - Briefing

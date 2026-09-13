@@ -31,4 +31,6 @@ enum Secrets {
         }
         return nil
     }
+
+    static var elevenLabsAPIKey: String? { value("ELEVENLABS_API_KEY") }
 }

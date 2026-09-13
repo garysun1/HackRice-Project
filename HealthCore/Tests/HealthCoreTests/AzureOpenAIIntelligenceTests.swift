@@ -8,14 +8,17 @@ import Testing
 
     @Test func decodesChatCompletion() throws {
         let api = """
-        {"choices":[{"message":{"content":"{\\"symptom\\":\\"wheezing\\",\\"severity\\":5,\\"duration_minutes\\":null,\\"tags\\":[\\"night\\"],\\"medications\\":[]}","refusal":null}}]}
+        {"choices":[{"message":{"content":"{\\"symptom\\":\\"wheezing\\",\\"symptom_category\\":\\"respiratory\\",\\"body_region\\":\\"chest\\",\\"severity\\":5,\\"onset_hours_ago\\":2.5,\\"duration_minutes\\":null,\\"triggers\\":[\\"outdoor_air\\"],\\"medications\\":[],\\"medication_helped\\":null}","refusal":null}}]}
         """.data(using: .utf8)!
 
         let payload: ExtractionPayload = try AzureOpenAIIntelligence.decodeChatCompletion(api)
         #expect(payload.symptom == "wheezing")
         #expect(payload.severity == 5)
         #expect(payload.durationMinutes == nil)
-        #expect(payload.tags == ["night"])
+        let event = payload.toEvent(transcript: "t", loggedAt: Date(timeIntervalSince1970: 1_760_000_000))
+        #expect(event.bodyRegion == .chest)
+        #expect(event.triggers == [.outdoorAir])
+        #expect(event.timestamp == Date(timeIntervalSince1970: 1_760_000_000 - 2.5 * 3600))
     }
 
     @Test func refusalThrows() {

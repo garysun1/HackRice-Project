@@ -11,7 +11,7 @@ final class AppUITests: XCTestCase {
         app.launchArguments = ["-demoMode", "--mock-speech", "--mock-intelligence"]
         app.launch()
 
-        XCTAssertTrue(app.tabBars.buttons["Timeline"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.tabBars.buttons["Log"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.tabBars.buttons["Trends"].exists)
         XCTAssertTrue(app.tabBars.buttons["Briefing"].exists)
         XCTAssertTrue(app.tabBars.buttons["Connections"].exists)
@@ -20,7 +20,7 @@ final class AppUITests: XCTestCase {
     @MainActor
     func testRecordFlowWithMockSpeech() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["-demoMode", "--mock-speech", "--mock-intelligence"]
+        app.launchArguments = ["-demoMode", "--mock-speech", "--mock-intelligence", "-listView"]
         app.launch()
 
         app.buttons["timeline.record"].tap()
@@ -34,7 +34,13 @@ final class AppUITests: XCTestCase {
         XCTAssertTrue(save.isEnabled)
         save.tap()
 
-        // Sheet dismisses back to the timeline with the new entry present.
+        // The canned note mentions the inhaler without stating whether it
+        // helped → the completeness check must ask exactly that follow-up.
+        XCTAssertTrue(app.staticTexts["followup.question"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["followup.question"].label.contains("help"))
+        app.buttons["followup.skip"].tap()
+
+        // Skipping saves what we have; sheet dismisses back to the timeline.
         XCTAssertTrue(app.buttons["timeline.record"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Chest Tightness"].firstMatch.exists)
     }

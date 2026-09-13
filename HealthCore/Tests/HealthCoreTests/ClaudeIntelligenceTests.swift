@@ -8,7 +8,7 @@ import Testing
 
     @Test func decodesExtractionResponse() throws {
         let api = """
-        {"content":[{"type":"thinking","thinking":""},{"type":"text","text":"{\\"symptom\\":\\"chest tightness\\",\\"severity\\":6,\\"duration_minutes\\":60,\\"tags\\":[\\"outdoors\\"],\\"medications\\":[\\"albuterol (rescue inhaler)\\"]}"}],"stop_reason":"end_turn"}
+        {"content":[{"type":"thinking","thinking":""},{"type":"text","text":"{\\"symptom\\":\\"chest tightness\\",\\"symptom_category\\":\\"respiratory\\",\\"body_region\\":\\"chest\\",\\"severity\\":6,\\"onset_hours_ago\\":null,\\"duration_minutes\\":60,\\"triggers\\":[\\"outdoor_air\\"],\\"medications\\":[\\"albuterol (rescue inhaler)\\"],\\"medication_helped\\":null}"}],"stop_reason":"end_turn"}
         """.data(using: .utf8)!
 
         let payload: ExtractionPayload = try ClaudeIntelligence.decodeMessage(api)

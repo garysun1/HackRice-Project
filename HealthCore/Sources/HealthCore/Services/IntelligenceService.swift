@@ -1,8 +1,8 @@
 import Foundation
 
 /// The "AI" seam. `MockIntelligence` is deterministic keyword extraction +
-/// template briefing (instant, offline); `ClaudeIntelligence` does real extraction
-/// and narrative synthesis via the Claude API when a key is available.
+/// template briefing (instant, offline); `ClaudeIntelligence` / `AzureOpenAIIntelligence`
+/// do real extraction and narrative synthesis when credentials are available.
 /// Async so network-backed implementations fit; MockIntelligence satisfies the
 /// requirements synchronously.
 public protocol IntelligenceService: Sendable {
@@ -16,20 +16,24 @@ public struct MockIntelligence: IntelligenceService {
 
     public init() {}
 
-    // MARK: - Extraction
+    // MARK: - Extraction (v2 taxonomy)
 
-    /// symptom keyword → canonical label, ordered by specificity (first match wins).
-    static let symptomLexicon: [(keywords: [String], label: String)] = [
-        (["chest tightness", "tight chest", "chest feels tight"], "chest tightness"),
-        (["shortness of breath", "short of breath", "hard to breathe", "couldn't breathe", "can't breathe", "breathless"], "shortness of breath"),
-        (["wheez"], "wheezing"),
-        (["cough"], "coughing"),
-        (["congest", "stuffy"], "congestion"),
-        (["headache", "migraine"], "headache"),
-        (["fatigue", "exhausted", "tired"], "fatigue"),
-        (["dizzy", "lightheaded"], "dizziness"),
-        (["nausea", "nauseous"], "nausea"),
-        (["chest pain"], "chest pain")
+    /// keyword → (canonical symptom, category, body region), first match wins.
+    static let symptomLexicon: [(keywords: [String], label: String, category: SymptomCategory, region: BodyRegion)] = [
+        (["chest tightness", "tight chest", "chest feels tight", "chest felt tight"], "chest tightness", .respiratory, .chest),
+        (["shortness of breath", "short of breath", "hard to breathe", "couldn't breathe", "can't breathe", "breathless"], "shortness of breath", .respiratory, .chest),
+        (["wheez"], "wheezing", .respiratory, .chest),
+        (["cough"], "coughing", .respiratory, .chest),
+        (["congest", "stuffy"], "congestion", .respiratory, .head),
+        (["headache", "migraine"], "headache", .neurological, .head),
+        (["sore throat", "throat"], "sore throat", .respiratory, .throat),
+        (["stomach", "nausea", "nauseous", "cramp"], "stomach discomfort", .gastrointestinal, .abdomen),
+        (["back pain", "back ache", "backache"], "back pain", .pain, .back),
+        (["rash", "itch", "hives"], "skin irritation", .skin, .skin),
+        (["chest pain"], "chest pain", .cardiovascular, .chest),
+        (["fatigue", "exhausted", "tired"], "fatigue", .general, .systemic),
+        (["dizzy", "lightheaded"], "dizziness", .neurological, .head),
+        (["anxious", "anxiety", "panic"], "anxiety", .mentalHealth, .systemic)
     ]
 
     static let medicationLexicon: [(keywords: [String], label: String)] = [
@@ -40,13 +44,14 @@ public struct MockIntelligence: IntelligenceService {
         (["antihistamine", "zyrtec", "claritin"], "antihistamine")
     ]
 
-    static let contextTags: [(keywords: [String], tag: String)] = [
-        (["outside", "outdoor", "walking out", "went out"], "outdoors"),
-        (["exercise", "run", "running", "workout", "gym", "walking"], "during/after activity"),
-        (["morning"], "morning"),
-        (["night", "sleep", "woke up", "couldn't sleep"], "night"),
-        (["work", "office", "class", "school"], "at work/school"),
-        (["stress", "anxious", "anxiety"], "stress-related")
+    static let triggerLexicon: [(keywords: [String], trigger: Trigger)] = [
+        (["outside", "outdoor", "walking out", "went out", "smog", "smoke"], .outdoorAir),
+        (["exercise", "run", "running", "workout", "gym", "walking", "football", "game"], .exercise),
+        (["pollen", "dust", "cat", "allerg"], .allergens),
+        (["stress", "anxious", "anxiety", "deadline"], .stress),
+        (["didn't sleep", "no sleep", "barely slept", "tired from"], .poorSleep),
+        (["ate", "eating", "food", "meal"], .food),
+        (["cold air", "humid", "heat", "hot day", "weather"], .weather)
     ]
 
     /// Severity phrases → 1–10.
@@ -60,16 +65,16 @@ public struct MockIntelligence: IntelligenceService {
     public func extractEvent(from transcript: String, at timestamp: Date) -> HealthEvent {
         let text = transcript.lowercased()
 
-        let symptom = Self.symptomLexicon.first { entry in
+        let match = Self.symptomLexicon.first { entry in
             entry.keywords.contains { text.contains($0) }
-        }?.label ?? "general discomfort"
+        }
 
         let medications = Self.medicationLexicon.compactMap { entry in
             entry.keywords.contains(where: { text.contains($0) }) ? entry.label : nil
         }
 
-        let tags = Self.contextTags.compactMap { entry in
-            entry.keywords.contains(where: { text.contains($0) }) ? entry.tag : nil
+        let triggers = Self.triggerLexicon.compactMap { entry in
+            entry.keywords.contains(where: { text.contains($0) }) ? entry.trigger : nil
         }
 
         var severity = Self.severityCues.first { entry in
@@ -82,16 +87,45 @@ public struct MockIntelligence: IntelligenceService {
             severity = min(severity + 1, 10)
         }
 
+        // Medication effect, only when explicitly stated.
+        var medicationHelped: Bool?
+        if !medications.isEmpty {
+            if text.contains("didn't help") || text.contains("did not help") || text.contains("no relief") {
+                medicationHelped = false
+            } else if text.contains("helped") || text.contains("eased") || text.contains("settled") || text.contains("relief") {
+                medicationHelped = true
+            }
+        }
+
         return HealthEvent(
-            timestamp: timestamp,
-            symptom: symptom,
+            timestamp: Self.applyOnset(to: timestamp, text: text),
+            symptom: match?.label ?? "general discomfort",
+            category: match?.category ?? .general,
+            bodyRegion: match?.region ?? .systemic,
             severity: severity,
             duration: Self.parseDuration(from: text),
-            tags: tags,
+            triggers: triggers,
             medications: medications,
+            medicationHelped: medicationHelped,
             transcript: transcript,
             source: .voice
         )
+    }
+
+    /// Back-dates "this morning" / "last night" style onsets deterministically.
+    static func applyOnset(to loggedAt: Date, text: String, calendar: Calendar = .current) -> Date {
+        if text.contains("this morning") || text.contains("woke up") {
+            let morning = calendar.date(bySettingHour: 8, minute: 0, second: 0, of: loggedAt)!
+            return min(morning, loggedAt)
+        }
+        if text.contains("last night") {
+            let yesterday = calendar.date(byAdding: .day, value: -1, to: loggedAt)!
+            return calendar.date(bySettingHour: 22, minute: 0, second: 0, of: yesterday)!
+        }
+        if text.contains("yesterday") {
+            return calendar.date(byAdding: .day, value: -1, to: loggedAt)!
+        }
+        return loggedAt
     }
 
     /// Parses "for about an hour", "for 20 minutes", "all day".
@@ -151,9 +185,14 @@ public struct MockIntelligence: IntelligenceService {
         if correlations.isEmpty { correlations.append("No strong lifestyle or environmental correlations detected yet.") }
 
         let medMentions = sorted.filter { !$0.medications.isEmpty }.count
-        let meds = medMentions > 0
+        var meds = medMentions > 0
             ? "Rescue medication use mentioned in \(medMentions) of \(sorted.count) episodes."
             : "No medication use recorded in this period."
+        let outcomes = sorted.compactMap(\.medicationHelped)
+        if !outcomes.isEmpty {
+            let helped = outcomes.filter { $0 }.count
+            meds += " Medication reported effective in \(helped) of \(outcomes.count) episodes with an outcome noted."
+        }
 
         let note = VisitBriefing.ClinicianNote(
             chiefConcerns: chief,

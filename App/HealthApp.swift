@@ -39,6 +39,8 @@ final class AppEnvironment {
     let persona: AsthmaPersona.Output
     let healthProvider: any HealthDataProvider
     let appointmentProvider: any AppointmentProvider
+    /// ElevenLabs key for spoken follow-up questions (nil → text-only).
+    let elevenLabsKey: String?
 
     init(arguments: [String] = ProcessInfo.processInfo.arguments) {
         self.isDemoMode = arguments.contains("-demoMode")
@@ -66,6 +68,7 @@ final class AppEnvironment {
         self.appointmentProvider = isDemoMode
             ? DemoAppointmentProvider()
             : CalendarAppointmentProvider()
+        self.elevenLabsKey = arguments.contains("--mock-intelligence") ? nil : Secrets.elevenLabsAPIKey
     }
 
     func makeTranscriber() -> any Transcriber {

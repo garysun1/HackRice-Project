@@ -8,7 +8,11 @@ enum IntelligencePrompts {
     You extract structured health events from short patient voice notes for a personal \
     health timeline. Be faithful to what was said; do not invent details. Severity: mild \
     language ~2-3, unqualified symptoms ~4-5, rescue medication use or strong language \
-    ~6-8, emergency language ~9-10.
+    ~6-8, emergency language ~9-10. onset_hours_ago: convert phrases like "this morning" \
+    or "last night" into hours before the current time provided; null if the event is \
+    happening now or no time is stated. medication_helped: only true/false when relief or \
+    lack of relief is explicitly stated, else null. Follow-up Q/A pairs appended to a note \
+    refine the same single event.
     """
 
     static let briefingSystem = """
@@ -20,6 +24,13 @@ enum IntelligencePrompts {
     sentence per provided correlation, leading with the numbers. talking_points: 2-4 \
     items the patient should raise. questions: exactly 3 questions to ask the doctor.
     """
+
+    /// User-turn content for extraction: the transcript plus the reference time
+    /// the model needs to resolve relative onsets.
+    static func extractionInput(transcript: String, now: Date) -> String {
+        let df = ISO8601DateFormatter()
+        return "Current time: \(df.string(from: now))\n\nVoice note:\n\(transcript)"
+    }
 
     /// The user-turn content for briefing generation: computed stats + episode log.
     static func briefingInput(events: [HealthEvent], metrics: [DailyMetrics]) -> String {
@@ -40,12 +51,20 @@ enum IntelligencePrompts {
         }
         let medMentions = sorted.filter { !$0.medications.isEmpty }.count
         facts.append("Rescue/medication use mentioned in \(medMentions) of \(sorted.count) episodes")
+        let medOutcomes = sorted.compactMap(\.medicationHelped)
+        if !medOutcomes.isEmpty {
+            let helped = medOutcomes.filter { $0 }.count
+            facts.append("Of \(medOutcomes.count) episodes with medication outcome reported, medication helped in \(helped)")
+        }
 
         let episodeLines = sorted.suffix(20).map { e in
-            var line = "\(df.string(from: e.timestamp)): \(e.symptom), severity \(e.severity)/10"
-            if !e.medications.isEmpty { line += ", meds: \(e.medications.joined(separator: "; "))" }
+            var line = "\(df.string(from: e.timestamp)): \(e.symptom) (\(e.category.rawValue), \(e.bodyRegion.rawValue)), severity \(e.severity)/10"
+            if !e.medications.isEmpty {
+                line += ", meds: \(e.medications.joined(separator: "; "))"
+                if let helped = e.medicationHelped { line += helped ? " (helped)" : " (did not help)" }
+            }
             if let aqi = e.environment?.aqi { line += ", AQI \(aqi)" }
-            if !e.tags.isEmpty { line += ", context: \(e.tags.joined(separator: "; "))" }
+            if !e.triggers.isEmpty { line += ", triggers: \(e.triggers.map(\.rawValue).joined(separator: "; "))" }
             line += " — \"\(e.transcript)\""
             return line
         }.joined(separator: "\n")
@@ -59,12 +78,16 @@ enum IntelligencePrompts {
         "type": "object",
         "properties": [
             "symptom": ["type": "string", "description": "Primary symptom in 1-3 lowercase words, e.g. 'chest tightness'"],
+            "symptom_category": ["type": "string", "enum": SymptomCategory.allCases.map(\.rawValue)],
+            "body_region": ["type": "string", "enum": BodyRegion.allCases.map(\.rawValue), "description": "Anatomical location; 'systemic' for whole-body symptoms like fatigue"],
             "severity": ["type": "integer", "description": "1 (barely noticeable) to 10 (worst imaginable), judged from language and medication use"],
+            "onset_hours_ago": ["type": ["number", "null"], "description": "Hours before current time the symptom started, resolved from phrases like 'this morning'; null if now/unstated"],
             "duration_minutes": ["type": ["integer", "null"], "description": "How long the symptom lasted, if stated"],
-            "tags": ["type": "array", "items": ["type": "string"], "description": "Short context tags like 'outdoors', 'morning', 'during/after activity', 'stress-related'"],
-            "medications": ["type": "array", "items": ["type": "string"], "description": "Medications mentioned, normalized, e.g. 'albuterol (rescue inhaler)'"]
+            "triggers": ["type": "array", "items": ["type": "string", "enum": Trigger.allCases.map(\.rawValue)], "description": "Suspected triggers actually indicated by the note"],
+            "medications": ["type": "array", "items": ["type": "string"], "description": "Medications mentioned, normalized, e.g. 'albuterol (rescue inhaler)'"],
+            "medication_helped": ["type": ["boolean", "null"], "description": "true/false only if relief or lack of relief is explicitly stated"]
         ],
-        "required": ["symptom", "severity", "duration_minutes", "tags", "medications"],
+        "required": ["symptom", "symptom_category", "body_region", "severity", "onset_hours_ago", "duration_minutes", "triggers", "medications", "medication_helped"],
         "additionalProperties": false
     ] }
 
@@ -92,24 +115,36 @@ enum IntelligencePrompts {
 /// Shared decodable payloads for both providers.
 struct ExtractionPayload: Decodable {
     let symptom: String
+    let symptomCategory: String
+    let bodyRegion: String
     let severity: Int
+    let onsetHoursAgo: Double?
     let durationMinutes: Int?
-    let tags: [String]
+    let triggers: [String]
     let medications: [String]
+    let medicationHelped: Bool?
 
     enum CodingKeys: String, CodingKey {
-        case symptom, severity, tags, medications
+        case symptom, severity, triggers, medications
+        case symptomCategory = "symptom_category"
+        case bodyRegion = "body_region"
+        case onsetHoursAgo = "onset_hours_ago"
         case durationMinutes = "duration_minutes"
+        case medicationHelped = "medication_helped"
     }
 
-    func toEvent(transcript: String, at timestamp: Date) -> HealthEvent {
-        HealthEvent(
-            timestamp: timestamp,
+    func toEvent(transcript: String, loggedAt: Date) -> HealthEvent {
+        let occurred = onsetHoursAgo.map { loggedAt.addingTimeInterval(-$0 * 3600) } ?? loggedAt
+        return HealthEvent(
+            timestamp: occurred,
             symptom: symptom,
+            category: SymptomCategory(rawValue: symptomCategory) ?? .general,
+            bodyRegion: BodyRegion(rawValue: bodyRegion) ?? .systemic,
             severity: severity,
             duration: durationMinutes.map { TimeInterval($0 * 60) },
-            tags: tags,
+            triggers: triggers.compactMap(Trigger.init(rawValue:)),
             medications: medications,
+            medicationHelped: medicationHelped,
             transcript: transcript,
             source: .voice
         )

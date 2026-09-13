@@ -8,7 +8,14 @@ enum DataStore {
         do {
             return try ModelContainer(for: StoredEvent.self, configurations: config)
         } catch {
-            fatalError("Could not create ModelContainer: \(error)")
+            // Schema drift during the hackathon: local cache data is disposable
+            // (demo mode reseeds), so wipe the store and retry rather than crash.
+            try? FileManager.default.removeItem(at: config.url)
+            do {
+                return try ModelContainer(for: StoredEvent.self, configurations: config)
+            } catch {
+                fatalError("Could not create ModelContainer: \(error)")
+            }
         }
     }
 

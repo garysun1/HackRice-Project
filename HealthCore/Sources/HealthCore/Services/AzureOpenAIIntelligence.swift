@@ -42,7 +42,7 @@ public struct AzureOpenAIIntelligence: IntelligenceService {
             "reasoning_effort": "minimal",  // extraction is simple; speed matters on save
             "messages": [
                 ["role": "system", "content": IntelligencePrompts.extractionSystem],
-                ["role": "user", "content": transcript]
+                ["role": "user", "content": IntelligencePrompts.extractionInput(transcript: transcript, now: timestamp)]
             ],
             "response_format": [
                 "type": "json_schema",
@@ -50,7 +50,7 @@ public struct AzureOpenAIIntelligence: IntelligenceService {
             ]
         ]
         let payload: ExtractionPayload = try await request(body: body)
-        return payload.toEvent(transcript: transcript, at: timestamp)
+        return payload.toEvent(transcript: transcript, loggedAt: timestamp)
     }
 
     public func generateBriefing(events: [HealthEvent], metrics: [DailyMetrics], now: Date) async throws -> VisitBriefing {
