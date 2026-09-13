@@ -266,6 +266,44 @@ final class AppEnvironment {
         return ConnectionStatusSnapshot(health: health, calendar: calendar, location: location)
     }
 
+    // MARK: - Briefing cache
+
+    /// The latest generated briefing, regenerated in the BACKGROUND whenever
+    /// events or metrics change (watched from RootView) — so the Briefing tab
+    /// renders instantly instead of re-running the ~10s generation on open.
+    private(set) var briefing: VisitBriefing?
+    private(set) var briefingInFlight = false
+    @ObservationIgnored private var briefingTask: Task<Void, Never>?
+    @ObservationIgnored private var briefingFingerprint: Int?
+
+    /// Kick off (or skip, if nothing changed) a background regeneration.
+    /// `fingerprint` identifies the data snapshot; bursts of changes (seeding)
+    /// are coalesced by the debounce + task cancellation.
+    func refreshBriefing(events: [HealthEvent], fingerprint: Int) {
+        guard fingerprint != briefingFingerprint else { return }
+        briefingFingerprint = fingerprint
+        briefingTask?.cancel()
+        guard !events.isEmpty else {
+            briefing = nil
+            briefingInFlight = false
+            return
+        }
+        briefingInFlight = true
+        briefingTask = Task { [weak self] in
+            // Debounce: let a burst of inserts settle before spending an API call.
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            guard let self, !Task.isCancelled else { return }
+            let metrics = await self.loadDailyMetrics()
+            // ResilientIntelligence falls back to the mock internally; the extra
+            // ?? MockIntelligence pass covers the bare-mock configuration too.
+            let result = (try? await self.intelligence.generateBriefing(events: events, metrics: metrics, now: Date()))
+                ?? MockIntelligence().generateBriefing(events: events, metrics: metrics, now: Date())
+            guard !Task.isCancelled else { return }
+            self.briefing = result
+            self.briefingInFlight = false
+        }
+    }
+
     func loadDailyMetrics() async -> [DailyMetrics] {
         do {
             let metrics = try await healthProvider.dailyMetrics(from: .distantPast, to: .now)

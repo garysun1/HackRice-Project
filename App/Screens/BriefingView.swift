@@ -15,9 +15,10 @@ struct BriefingView: View {
     }
 
     @State private var audience: Audience = .clinician
-    @State private var briefing: VisitBriefing?
-    @State private var metrics: [DailyMetrics] = []
-    @State private var appointment: Appointment?
+
+    /// Generated in the background by AppEnvironment whenever data changes
+    /// (see RootView's fingerprint watcher) — this view only renders the cache.
+    private var briefing: VisitBriefing? { appEnvironment.briefing }
 
     var body: some View {
         NavigationStack {
@@ -29,13 +30,27 @@ struct BriefingView: View {
                         description: Text("Log a few entries and Breathing Room will prepare a visit summary.")
                     )
                 } else if let briefing {
+                    // Stale-while-revalidate: show the last ready briefing
+                    // instantly; a refresh indicator marks an in-flight update.
                     briefingContent(briefing)
                 } else {
+                    // Only reachable when data changed and generation hasn't
+                    // finished its first pass yet.
                     ProgressView("Preparing your briefing…")
                 }
             }
             .navigationTitle("Prep my visit")
             .toolbar {
+                if appEnvironment.briefingInFlight, briefing != nil {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        HStack(spacing: 5) {
+                            ProgressView().controlSize(.small)
+                            Text("Updating…")
+                                .font(.rounded(.caption))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
                 if let briefing {
                     ToolbarItem(placement: .topBarTrailing) {
                         ShareLink(item: exportText(briefing)) {
@@ -45,48 +60,13 @@ struct BriefingView: View {
                     }
                 }
             }
-            .task(id: stored.count) {
-                await regenerate()
-            }
-            .task(id: appEnvironment.metricsVersion) {
-                await regenerate()
-            }
-            .task {
-                appointment = await appEnvironment.appointmentProvider.nextAppointment()
-            }
         }
-    }
-
-    private func regenerate() async {
-        let events = stored.map(\.asHealthEvent)
-        metrics = await appEnvironment.loadDailyMetrics()
-        // ResilientIntelligence falls back to the mock internally; the extra
-        // ?? MockIntelligence pass covers the bare-mock configuration too.
-        briefing = (try? await appEnvironment.intelligence.generateBriefing(events: events, metrics: metrics, now: Date()))
-            ?? MockIntelligence().generateBriefing(events: events, metrics: metrics, now: Date())
     }
 
     @ViewBuilder
     private func briefingContent(_ briefing: VisitBriefing) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                if let appointment {
-                    HStack(spacing: 10) {
-                        Image(systemName: "calendar.badge.clock")
-                            .foregroundStyle(Color.brandTeal)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(appointment.title)
-                                .font(.rounded(.subheadline, weight: .semibold))
-                            Text("\(appointment.date, format: .dateTime.weekday(.wide).month().day().hour().minute()) — briefing ready")
-                                .font(.rounded(.caption))
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    .padding(12)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.brandTeal.opacity(0.1), in: RoundedRectangle(cornerRadius: 14))
-                }
-
                 Picker("Audience", selection: $audience) {
                     ForEach(Audience.allCases) { Text($0.rawValue).tag($0) }
                 }

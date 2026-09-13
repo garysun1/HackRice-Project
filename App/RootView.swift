@@ -1,10 +1,14 @@
 import SwiftUI
+import SwiftData
+import HealthCore
 
 enum AppTab: String {
     case timeline, trends, briefing, connections
 }
 
 struct RootView: View {
+    @Environment(AppEnvironment.self) private var appEnvironment
+    @Query(sort: \StoredEvent.timestamp) private var events: [StoredEvent]
     @State private var selection: AppTab = {
         // `-openTab briefing` jumps straight to a tab (screenshot loop + demo staging).
         let args = ProcessInfo.processInfo.arguments
@@ -31,6 +35,33 @@ struct RootView: View {
         .sheet(isPresented: $showingRecord) {
             RecordView()
         }
+        // Regenerate the briefing in the background the moment the data it
+        // summarizes changes (new/edited/deleted event, metrics entry), so the
+        // Briefing tab opens instantly on an up-to-date cache.
+        .task(id: briefingFingerprint) {
+            appEnvironment.refreshBriefing(
+                events: events.map(\.asHealthEvent),
+                fingerprint: briefingFingerprint
+            )
+        }
+    }
+
+    /// Snapshot identity of everything the briefing consumes.
+    private var briefingFingerprint: Int {
+        var hasher = Hasher()
+        hasher.combine(events.count)
+        for event in events {
+            hasher.combine(event.id)
+            hasher.combine(event.timestamp)
+            hasher.combine(event.symptom)
+            hasher.combine(event.severity)
+            hasher.combine(event.bodyRegionRaw)
+            hasher.combine(event.duration)
+            hasher.combine(event.medications)
+            hasher.combine(event.medicationHelped)
+        }
+        hasher.combine(appEnvironment.metricsVersion)
+        return hasher.finalize()
     }
 
     /// Custom bar: four tabs around a raised central log button,
