@@ -19,7 +19,7 @@ public struct MockIntelligence: IntelligenceService {
     // MARK: - Extraction (v2 taxonomy)
 
     /// keyword → (canonical symptom, category, body region), first match wins.
-    static let symptomLexicon: [(keywords: [String], label: String, category: SymptomCategory, region: BodyRegion)] = [
+    public static let symptomLexicon: [(keywords: [String], label: String, category: SymptomCategory, region: BodyRegion)] = [
         (["chest tightness", "tight chest", "chest feels tight", "chest felt tight"], "chest tightness", .respiratory, .chest),
         (["shortness of breath", "short of breath", "hard to breathe", "couldn't breathe", "can't breathe", "breathless"], "shortness of breath", .respiratory, .chest),
         (["wheez"], "wheezing", .respiratory, .chest),
@@ -73,7 +73,7 @@ public struct MockIntelligence: IntelligenceService {
         (["head", "forehead", "temple", "scalp"], .head)
     ]
 
-    static let medicationLexicon: [(keywords: [String], label: String)] = [
+    public static let medicationLexicon: [(keywords: [String], label: String)] = [
         (["rescue inhaler", "albuterol", "inhaler"], "albuterol (rescue inhaler)"),
         (["flovent", "fluticasone", "controller"], "fluticasone (controller)"),
         (["ibuprofen", "advil"], "ibuprofen"),
@@ -257,7 +257,12 @@ public struct MockIntelligence: IntelligenceService {
 
         var correlations: [String] = []
         if let aqiCorr = insights.highAQICorrelation {
-            correlations.append("\(aqiCorr.onHighAQIDays) of \(aqiCorr.total) episodes occurred on days with AQI > 100 (only \(aqiCorr.highAQIDayShare)% of days were high-AQI).")
+            var line = "\(aqiCorr.onHighAQIDays) of \(aqiCorr.total) episodes occurred on days with AQI > 100"
+            // Only claim a base rate when daily air-quality history backs it up.
+            if let share = aqiCorr.highAQIDayShare {
+                line += " (only \(share)% of days were high-AQI)"
+            }
+            correlations.append(line + ".")
         }
         if let sleepCorr = insights.shortSleepCorrelation {
             correlations.append("\(sleepCorr.afterShortSleep) of \(sleepCorr.total) episodes followed nights with under 6h sleep.")

@@ -48,6 +48,9 @@ struct BriefingView: View {
             .task(id: stored.count) {
                 await regenerate()
             }
+            .task(id: appEnvironment.metricsVersion) {
+                await regenerate()
+            }
             .task {
                 appointment = await appEnvironment.appointmentProvider.nextAppointment()
             }
@@ -56,11 +59,7 @@ struct BriefingView: View {
 
     private func regenerate() async {
         let events = stored.map(\.asHealthEvent)
-        if metrics.isEmpty {
-            metrics = (try? await appEnvironment.healthProvider.dailyMetrics(
-                from: .distantPast, to: .now
-            )) ?? []
-        }
+        metrics = await appEnvironment.loadDailyMetrics()
         // ResilientIntelligence falls back to the mock internally; the extra
         // ?? MockIntelligence pass covers the bare-mock configuration too.
         briefing = (try? await appEnvironment.intelligence.generateBriefing(events: events, metrics: metrics, now: Date()))

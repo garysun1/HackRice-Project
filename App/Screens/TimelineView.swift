@@ -3,6 +3,7 @@ import SwiftData
 import HealthCore
 
 struct TimelineView: View {
+    @Environment(\.modelContext) private var modelContext
     @Query(sort: \StoredEvent.timestamp, order: .reverse) private var events: [StoredEvent]
     // Declaration order = segment order: Body first (left), and the default.
     enum ViewMode: String, CaseIterable, Identifiable {
@@ -13,6 +14,8 @@ struct TimelineView: View {
     // Body view is the default lens; `-listView` opens on the list (tests/demos).
     @State private var viewMode: ViewMode =
         ProcessInfo.processInfo.arguments.contains("-listView") ? .list : .body
+    /// Tap a row to fix or complete an entry (voice extraction included).
+    @State private var editingEvent: StoredEvent?
 
     private var groupedByDay: [(day: Date, events: [StoredEvent])] {
         Dictionary(grouping: events) { Calendar.current.startOfDay(for: $0.timestamp) }
@@ -32,7 +35,19 @@ struct TimelineView: View {
                         ForEach(groupedByDay, id: \.day) { group in
                             Section {
                                 ForEach(group.events) { event in
-                                    EventRow(event: event)
+                                    Button {
+                                        editingEvent = event
+                                    } label: {
+                                        EventRow(event: event)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .accessibilityIdentifier("timeline.event.\(event.id.uuidString)")
+                                    .swipeActions(edge: .trailing) {
+                                        Button("Delete", role: .destructive) {
+                                            modelContext.delete(event)
+                                            try? modelContext.save()
+                                        }
+                                    }
                                 }
                             } header: {
                                 Text(group.day, format: .dateTime.weekday(.wide).month().day())
@@ -58,6 +73,9 @@ struct TimelineView: View {
                         .font(.rounded(.caption))
                         .foregroundStyle(.secondary)
                 }
+            }
+            .sheet(item: $editingEvent) { event in
+                EpisodeEditorView(.edit(event))
             }
         }
     }

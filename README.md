@@ -15,7 +15,7 @@ Appointments are 15 minutes; the months between them are where your health actua
 - **Trends** — symptom episodes overlaid on AQI and sleep. Our demo persona's asthma episodes cluster on high-AQI days at 3–4× the base rate, and the app says so in one sentence.
 - **Prep my visit** — one generator, two views: a clinician-style note (chief concerns, frequency/severity statistics, correlations, medication use, episode timeline) and a patient view (talking points, questions to ask). Exportable.
 - **Appointment awareness** — EventKit spots "Dr. Chen — Pulmonology, Monday" on your calendar and has the briefing ready.
-- **One integration, whole ecosystem** — Apple Health is the hub: Strava workouts, MyFitnessPal nutrition, Apple Watch heart data, and Fitbit (via Google Health's Aug 2026 Apple Health sync) all flow in, each credited to its source.
+- **One integration, whole ecosystem** — Apple Health is the hub: Strava workouts, MyFitnessPal nutrition, Apple Watch heart data, and Fitbit (via Google Health's Aug 2026 Apple Health sync) all flow in, each credited to its source. Connections groups them into **General / Sleep / Fitness Health**, and every source drills down to exactly what it imported — data types, day counts, date span, latest reading. Nothing is listed that isn't actually supplying data.
 
 Everything stays on-device. No accounts, no backend, no tracking.
 
@@ -27,6 +27,12 @@ Requirements: Xcode 26+, [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`bre
 xcodegen generate                 # produces HealthApp.xcodeproj from project.yml
 open HealthApp.xcodeproj            # run the HealthApp scheme in a simulator or on device
 ```
+
+## Data modes
+
+`AppConfig.useMockData` is the single source-level mode switch. It defaults to `false`, so the app starts with real on-device data and no seeded timeline. Set it to `true` for the deterministic asthma persona and an in-memory store that never touches real data.
+
+Apple Health is connected explicitly from **Connections › Apple Health › Connect**. Symptoms can be added from the Timeline `+` menu, while daily sleep, activity, and nutrition can be entered there, from Trends `+`, or from Connections › Manual entry. Daily AQI history comes from Open-Meteo using the authorized device location, with Houston as the fallback.
 
 Headless (CI-style) loop used to build this project:
 
@@ -41,10 +47,15 @@ Useful launch arguments:
 
 | Argument | Effect |
 |---|---|
-| `-demoMode` | Seed 3 months of demo data (deterministic asthma persona) |
+| `-demoMode` | Force the seeded 3-month persona with an in-memory store |
+| `-inMemoryStore` | Keep real-mode events, manual metrics, and AQI cache ephemeral |
+| `-seedHealthKit` | After Connect, write the demo persona into HealthKit for readback testing |
+| `-offline` | Disable network AQI history and use an empty canned history |
 | `--mock-speech` | Deterministic transcriber — no mic/speech permissions touched |
-| `-healthkit` | Use the real HealthKit read path instead of the seeded mock |
 | `-openTab trends` | Launch directly on a given tab |
+| `-healthkit` | Legacy compatibility argument; accepted and ignored because real mode always uses HealthKit |
+
+On a simulator, use an **iPhone 17**. HealthKit records authorization per bundle id and that decision survives app uninstall; if the permission state gets stuck, reset only that simulator with `xcrun simctl erase <device>`.
 
 Core-logic tests run anywhere, no simulator needed:
 

@@ -1,117 +1,145 @@
 import SwiftUI
 import SwiftData
-import Charts
 import HealthCore
 
-/// The longevity-stack view: symptom episodes overlaid on environment (AQI)
-/// and lifestyle (sleep) so the clustering is visible at a glance.
+enum TrendRange: Int, CaseIterable, Identifiable {
+    case week = 7
+    case month = 30
+    case quarter = 90
+
+    var id: Int { rawValue }
+
+    var label: String {
+        switch self {
+        case .week: "7D"
+        case .month: "30D"
+        case .quarter: "90D"
+        }
+    }
+}
+
 struct TrendsView: View {
     @Environment(AppEnvironment.self) private var appEnvironment
     @Query(sort: \StoredEvent.timestamp) private var stored: [StoredEvent]
     @State private var metrics: [DailyMetrics] = []
+    @State private var range: TrendRange = .month
+    @State private var showingManualMetrics = false
+    @State private var hasLoaded = false
+
+    private let calendar = Calendar.current
 
     private var events: [HealthEvent] { stored.map(\.asHealthEvent) }
-
     private var insights: Insights { Insights(events: events, metrics: metrics) }
+    private var windowEnd: Date { .now }
+    private var windowStart: Date {
+        calendar.date(
+            byAdding: .day,
+            value: -range.rawValue,
+            to: calendar.startOfDay(for: .now)
+        ) ?? .now
+    }
+    private var windowedMetrics: [DailyMetrics] {
+        metrics.filter { $0.date >= windowStart }
+    }
+    private var windowedEvents: [HealthEvent] {
+        events.filter { $0.timestamp >= windowStart }
+    }
+    private var useWeekly: Bool { range == .quarter }
+    private var displayedSeries: [TrendSeries] {
+        let ranked = insights.rankedSeries
+        guard ranked.isEmpty else { return ranked }
+        return TrendSeries.allCases.filter { series in
+            metrics.contains { series.value(in: $0) != nil }
+        }
+    }
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    if let corr = insights.highAQICorrelation {
-                        InsightCallout(
-                            text: "\(corr.onHighAQIDays) of \(corr.total) episodes happened on high-AQI days — though only \(corr.highAQIDayShare)% of days were high-AQI."
-                        )
-                    }
+                    if hasLoaded && metrics.isEmpty && stored.isEmpty {
+                        ContentUnavailableView {
+                            Label("No data yet", systemImage: "chart.xyaxis.line")
+                        } description: {
+                            Text("Connect Apple Health or log an entry to start seeing trends.")
+                        } actions: {
+                            Button("Log daily metrics") {
+                                showingManualMetrics = true
+                            }
+                        }
+                        .accessibilityElement(children: .contain)
+                        .accessibilityIdentifier("trends.empty")
 
-                    ChartCard(title: "Air quality & episodes", systemImage: "aqi.medium") {
-                        aqiChart
-                    }
+                        statsRow
+                    } else {
+                        Picker("Range", selection: $range) {
+                            ForEach(TrendRange.allCases) { range in
+                                Text(range.label).tag(range)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        .accessibilityIdentifier("trends.range")
 
-                    ChartCard(title: "Sleep & episodes", systemImage: "bed.double") {
-                        sleepChart
-                    }
+                        if let correlation = insights.rankedCorrelations.first,
+                           correlation.strength != .insufficient {
+                            InsightCallout(text: correlation.calloutText)
+                        }
 
-                    statsRow
+                        LazyVGrid(
+                            columns: [GridItem(.flexible()), GridItem(.flexible())],
+                            spacing: 12
+                        ) {
+                            ForEach(displayedSeries) { series in
+                                NavigationLink(value: series) {
+                                    MetricTile(
+                                        series: series,
+                                        correlation: insights.correlation(for: series),
+                                        metrics: windowedMetrics,
+                                        weekly: useWeekly
+                                    )
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityIdentifier("trends.tile.\(series.id)")
+                            }
+                        }
+
+                        statsRow
+                    }
                 }
                 .padding()
             }
             .background(Color.appBackground)
             .navigationTitle("Trends")
-            .task {
-                if metrics.isEmpty {
-                    metrics = (try? await appEnvironment.healthProvider.dailyMetrics(
-                        from: .distantPast, to: .now
-                    )) ?? []
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        showingManualMetrics = true
+                    } label: {
+                        Image(systemName: "plus")
+                    }
+                    .accessibilityLabel("Log daily metrics")
+                    .accessibilityIdentifier("trends.add")
                 }
             }
-        }
-    }
-
-    private var aqiChart: some View {
-        Chart {
-            ForEach(metrics) { day in
-                if let aqi = day.peakAQI {
-                    LineMark(
-                        x: .value("Day", day.date),
-                        y: .value("AQI", aqi)
-                    )
-                    .foregroundStyle(Color.gray.opacity(0.55))
-                    .interpolationMethod(.monotone)
-                }
+            .sheet(isPresented: $showingManualMetrics) {
+                ManualMetricsView()
             }
-            RuleMark(y: .value("Unhealthy", 100))
-                .foregroundStyle(.red.opacity(0.35))
-                .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 4]))
-                .annotation(position: .top, alignment: .trailing) {
-                    Text("AQI 100")
-                        .font(.rounded(.caption2))
-                        .foregroundStyle(.red.opacity(0.7))
-                }
-            ForEach(events) { event in
-                if let aqi = event.environment?.aqi {
-                    PointMark(
-                        x: .value("Day", event.timestamp),
-                        y: .value("AQI", aqi)
-                    )
-                    .foregroundStyle(Color.severity(event.severity))
-                    .symbolSize(CGFloat(60 + (event.severity ?? 3) * 14))
-                }
-            }
-        }
-        .chartYAxisLabel("US AQI")
-        .frame(height: 190)
-    }
-
-    private var sleepChart: some View {
-        Chart {
-            ForEach(metrics) { day in
-                if let sleep = day.sleepHours {
-                    BarMark(
-                        x: .value("Day", day.date),
-                        y: .value("Hours", sleep.value)
-                    )
-                    .foregroundStyle(
-                        sleep.value < 6
-                            ? Color.orange.opacity(0.75)
-                            : Color.brandTeal.opacity(0.45)
-                    )
-                }
-            }
-            ForEach(events) { event in
-                PointMark(
-                    x: .value("Day", event.timestamp),
-                    y: .value("Hours", 9.3)
+            .navigationDestination(for: TrendSeries.self) { series in
+                MetricDetailView(
+                    series: series,
+                    correlation: insights.correlation(for: series),
+                    metrics: windowedMetrics,
+                    events: windowedEvents,
+                    weekly: useWeekly,
+                    windowStart: windowStart,
+                    windowEnd: windowEnd
                 )
-                .foregroundStyle(Color.severity(event.severity))
-                .symbolSize(50)
             }
-            RuleMark(y: .value("Short sleep", 6))
-                .foregroundStyle(.orange.opacity(0.4))
-                .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 4]))
+            .task(id: appEnvironment.metricsVersion) {
+                metrics = await appEnvironment.loadDailyMetrics()
+                hasLoaded = true
+            }
         }
-        .chartYAxisLabel("Sleep (h) — dots are episodes")
-        .frame(height: 170)
     }
 
     private var statsRow: some View {
@@ -120,6 +148,13 @@ struct TrendsView: View {
             StatTile(value: String(format: "%.1f", insights.meanSeverity), label: "avg severity")
             StatTile(value: String(format: "%.1f", insights.episodesPerWeek), label: "per week")
         }
+        // Carries how many days of lifestyle data the provider actually returned, so
+        // tests can tell "HealthKit returned nothing" from "the chart just looks empty".
+        // An invisible probe view can't be used: zero-size/zero-opacity views are
+        // dropped from the accessibility tree entirely.
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("trends.stats")
+        .accessibilityValue("metricDays:\(metrics.count)")
     }
 }
 

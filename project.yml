@@ -11,6 +11,8 @@ settings:
     DEVELOPMENT_TEAM: ""
     COMPILER_INDEX_STORE_ENABLE: "NO"
     GENERATE_INFOPLIST_FILE: "YES"
+    CURRENT_PROJECT_VERSION: "1"
+    MARKETING_VERSION: "1.0"
 packages:
   HealthCore:
     path: HealthCore
@@ -39,6 +41,7 @@ targets:
         NSHealthShareUsageDescription: "Interim reads steps, sleep, heart rate, workouts, and nutrition to correlate them with your symptoms."
         NSHealthUpdateUsageDescription: "Interim writes demo sample data in demo mode only."
         NSCalendarsFullAccessUsageDescription: "Interim looks for upcoming doctor appointments to help you prepare."
+        NSLocationWhenInUseUsageDescription: "Interim uses your location to look up local air quality."
         ITSAppUsesNonExemptEncryption: false
   AppTests:
     type: bundle.unit-test

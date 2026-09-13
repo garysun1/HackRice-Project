@@ -5,6 +5,7 @@ public struct HealthEvent: Identifiable, Codable, Hashable, Sendable {
     public enum Source: String, Codable, Sendable {
         case voice
         case text
+        case manual
         case seeded
     }
 

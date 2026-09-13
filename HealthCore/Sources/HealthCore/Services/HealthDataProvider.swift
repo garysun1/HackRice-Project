@@ -8,8 +8,19 @@ public protocol HealthDataProvider: Sendable {
     func requestAuthorization() async throws
     /// Daily aggregates for the given range, newest last.
     func dailyMetrics(from start: Date, to end: Date) async throws -> [DailyMetrics]
-    /// Distinct contributing source names seen in the data, for the Connections screen.
+    /// Distinct contributing source names seen in the data.
     func contributingSources() async throws -> [String]
+    /// Per-source, per-data-type detail backing the Connections drill-down: which apps and
+    /// devices supplied which metrics, over what span. Sources appear only when they are
+    /// genuinely supplying data.
+    func sourceContributions() async throws -> [SourceContribution]
+    /// Writes seeded samples into the backing store so the real read path can be
+    /// exercised on a simulator or a fresh device. No-op for stores that can't accept writes.
+    func seedDemoData(_ metrics: [DailyMetrics]) async throws
+}
+
+public extension HealthDataProvider {
+    func seedDemoData(_ metrics: [DailyMetrics]) async throws {}
 }
 
 public final class MockHealthProvider: HealthDataProvider {
@@ -28,14 +39,10 @@ public final class MockHealthProvider: HealthDataProvider {
     }
 
     public func contributingSources() async throws -> [String] {
-        var names: Set<String> = []
-        for day in metrics {
-            if let m = day.steps { names.insert(m.sourceName) }
-            if let m = day.sleepHours { names.insert(m.sourceName) }
-            if let m = day.restingHeartRate { names.insert(m.sourceName) }
-            if let m = day.workoutMinutes { names.insert(m.sourceName) }
-            if let m = day.dietaryEnergyKcal { names.insert(m.sourceName) }
-        }
-        return names.sorted()
+        try await sourceContributions().map(\.sourceName)
+    }
+
+    public func sourceContributions() async throws -> [SourceContribution] {
+        SourceContribution.from(metrics: metrics)
     }
 }

@@ -7,14 +7,17 @@ public protocol EnvironmentService: Sendable {
 
 /// Keyless Open-Meteo air-quality client. Defaults to Houston, TX.
 public struct OpenMeteoEnvironmentService: EnvironmentService {
-    public var latitude: Double
-    public var longitude: Double
     private let session: URLSession
+    private let coordinateProvider: @Sendable () async -> (lat: Double, lon: Double)
 
-    public init(latitude: Double = 29.7604, longitude: Double = -95.3698, session: URLSession = .shared) {
-        self.latitude = latitude
-        self.longitude = longitude
+    public init(
+        session: URLSession = .shared,
+        coordinateProvider: @escaping @Sendable () async -> (lat: Double, lon: Double) = {
+            (lat: 29.7604, lon: -95.3698)
+        }
+    ) {
         self.session = session
+        self.coordinateProvider = coordinateProvider
     }
 
     struct Response: Decodable {
@@ -26,10 +29,11 @@ public struct OpenMeteoEnvironmentService: EnvironmentService {
     }
 
     public func currentSnapshot() async throws -> EnvironmentSnapshot {
+        let coordinate = await coordinateProvider()
         var components = URLComponents(string: "https://air-quality-api.open-meteo.com/v1/air-quality")!
         components.queryItems = [
-            URLQueryItem(name: "latitude", value: String(latitude)),
-            URLQueryItem(name: "longitude", value: String(longitude)),
+            URLQueryItem(name: "latitude", value: String(coordinate.lat)),
+            URLQueryItem(name: "longitude", value: String(coordinate.lon)),
             URLQueryItem(name: "current", value: "us_aqi,pm2_5")
         ]
         let (data, _) = try await session.data(from: components.url!)

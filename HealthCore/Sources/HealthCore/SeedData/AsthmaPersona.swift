@@ -13,6 +13,11 @@ public enum AsthmaPersona {
     /// Generates `days` days of history ending yesterday relative to `reference`.
     public static func generate(days: Int = 92, reference: Date = Date(), seed: UInt64 = 0xC0FFEE) -> Output {
         var rng = SplitMix64(seed: seed)
+        // Nutrition detail draws from its own stream so adding it leaves the
+        // original episode/AQI sequence — and every test pinned to it — unchanged.
+        var dietRng = SplitMix64(seed: seed &+ 0x0D1E7)
+        // Severity detail likewise gets its own stream (see legacySeverity below).
+        var sevRng = SplitMix64(seed: seed &+ 0x5E7E1)
         let calendar = Calendar.current
         let today = calendar.startOfDay(for: reference)
 
@@ -41,36 +46,61 @@ public enum AsthmaPersona {
             let workedOut = rng.chance(0.3)
             let restingHR = 62 + Int(rng.next(upperBound: 9)) + (shortNight ? 3 : 0)
 
+            // Hoisted in their original order so the RNG call sequence is untouched.
+            let workoutMetric: DailyMetrics.Metric<Int>? = workedOut
+                ? .init(20 + Int(rng.next(upperBound: 40)), via: "Strava")
+                : nil
+            let loggedFood = rng.chance(0.6)
+            let energyMetric: DailyMetrics.Metric<Int>? = loggedFood
+                ? .init(1800 + Int(rng.next(upperBound: 700)), via: "MyFitnessPal")
+                : nil
+
             metrics.append(DailyMetrics(
                 date: day,
                 steps: .init(steps, via: "Fitbit (Google Health)"),
                 sleepHours: .init((sleep * 10).rounded() / 10, via: "Fitbit (Google Health)"),
                 restingHeartRate: .init(restingHR, via: "Apple Watch"),
-                workoutMinutes: workedOut ? .init(20 + Int(rng.next(upperBound: 40)), via: "Strava") : nil,
-                dietaryEnergyKcal: rng.chance(0.6) ? .init(1800 + Int(rng.next(upperBound: 700)), via: "MyFitnessPal") : nil,
+                workoutMinutes: workoutMetric,
+                dietaryEnergyKcal: energyMetric,
+                caffeineMg: loggedFood ? .init(40 + Int(dietRng.next(upperBound: 220)), via: "MyFitnessPal") : nil,
+                sodiumMg: loggedFood ? .init(1500 + Int(dietRng.next(upperBound: 2200)), via: "Cronometer") : nil,
+                waterML: loggedFood ? .init(1200 + Int(dietRng.next(upperBound: 1600)), via: "Cronometer") : nil,
                 peakAQI: aqi
             ))
 
             // --- Episodes: probability driven by AQI and sleep (the demo's correlation).
-            var pEpisode = 0.015
-            if aqi > 100 { pEpisode += 0.70 }
-            else if aqi > 80 { pEpisode += 0.08 }
+            var pEpisode = 0.02
+            if aqi > 100 { pEpisode += 0.62 }
+            else if aqi > 80 { pEpisode += 0.10 }
             if sleep < 6.0 { pEpisode += 0.10 }
 
             guard rng.chance(pEpisode) else { continue }
+
+            // Legacy single-draw severity: consumed from the MAIN stream with
+            // the exact draw pattern the correlation tests are pinned to (one
+            // next() here; chance(0.8) below only when this lands >= 5). It
+            // gates inhaler use; the displayed severity comes from a side
+            // stream so its extra draws can't shift episode placement.
+            let legacySeverity: Int = {
+                var s = 3 + Int(rng.next(upperBound: 3))
+                if aqi > 130 { s += 3 } else if aqi > 100 { s += 2 }
+                if sleep < 6.0 { s += 1 }
+                return min(s, 9)
+            }()
 
             let severity: Int = {
                 // 1–5 baseline with randomized environmental bumps: the AQI
                 // correlation stays visible in aggregate, but individual days
                 // spread across the whole 1–9 range instead of piling at 5–8.
-                var s = 1 + Int(rng.next(upperBound: 5))
-                if aqi > 130 { s += 2 + Int(rng.next(upperBound: 3)) }
-                else if aqi > 100 { s += Int(rng.next(upperBound: 3)) }
-                if sleep < 6.0 { s += Int(rng.next(upperBound: 2)) }
+                var s = 1 + Int(sevRng.next(upperBound: 5))
+                if aqi > 130 { s += 2 + Int(sevRng.next(upperBound: 3)) }
+                else if aqi > 100 { s += Int(sevRng.next(upperBound: 3)) }
+                if sleep < 6.0 { s += Int(sevRng.next(upperBound: 2)) }
                 return min(s, 9)
             }()
 
-            let usedInhaler = severity >= 5 && rng.chance(0.8)
+            let inhalerRoll = legacySeverity >= 5 && rng.chance(0.8)
+            let usedInhaler = inhalerRoll && severity >= 5
             let template = Self.episodeTemplates[Int(rng.next(upperBound: UInt64(Self.episodeTemplates.count)))]
             let hourSpan = template.hourRange.upperBound - template.hourRange.lowerBound
             let hour = template.hourRange.lowerBound + Int(rng.next(upperBound: UInt64(max(hourSpan, 1))))
@@ -79,7 +109,8 @@ public enum AsthmaPersona {
 
             // Inhaler effectiveness: mostly helps, occasionally doesn't — the
             // "didn't help" cases are what a pulmonologist most wants to see.
-            let inhalerHelped: Bool? = usedInhaler ? rng.chance(0.85) : nil
+            // Side stream: this draw didn't exist in the pinned sequence.
+            let inhalerHelped: Bool? = usedInhaler ? sevRng.chance(0.85) : nil
 
             events.append(HealthEvent(
                 timestamp: timestamp,
