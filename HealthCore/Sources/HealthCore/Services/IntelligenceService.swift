@@ -1,13 +1,15 @@
 import Foundation
 
-/// The "AI" seam. Tonight `MockIntelligence` (deterministic keyword extraction +
-/// template briefing) stands in; `ClaudeIntelligence` in the app target takes over
-/// when ANTHROPIC_API_KEY is provided.
+/// The "AI" seam. `MockIntelligence` is deterministic keyword extraction +
+/// template briefing (instant, offline); `ClaudeIntelligence` does real extraction
+/// and narrative synthesis via the Claude API when a key is available.
+/// Async so network-backed implementations fit; MockIntelligence satisfies the
+/// requirements synchronously.
 public protocol IntelligenceService: Sendable {
     /// Turn a raw transcript into a structured event.
-    func extractEvent(from transcript: String, at timestamp: Date) -> HealthEvent
+    func extractEvent(from transcript: String, at timestamp: Date) async throws -> HealthEvent
     /// Synthesize the doctor-visit briefing from the timeline + lifestyle data.
-    func generateBriefing(events: [HealthEvent], metrics: [DailyMetrics], now: Date) -> VisitBriefing
+    func generateBriefing(events: [HealthEvent], metrics: [DailyMetrics], now: Date) async throws -> VisitBriefing
 }
 
 public struct MockIntelligence: IntelligenceService {

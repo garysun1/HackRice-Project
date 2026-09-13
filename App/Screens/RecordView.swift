@@ -21,6 +21,8 @@ struct RecordView: View {
     @State private var errorMessage: String?
     @State private var transcriber: (any Transcriber)?
     @State private var listenTask: Task<Void, Never>?
+    @State private var isSaving = false
+    private let previewIntelligence = MockIntelligence()
 
     var body: some View {
         NavigationStack {
@@ -65,8 +67,10 @@ struct RecordView: View {
             }
             .onChange(of: transcript) {
                 guard !transcript.isEmpty else { extracted = nil; return }
+                // Live preview stays on the instant local extractor; the real
+                // intelligence (Claude when available) runs once, on save.
                 withAnimation(.snappy) {
-                    extracted = appEnvironment.intelligence.extractEvent(from: transcript, at: Date())
+                    extracted = previewIntelligence.extractEvent(from: transcript, at: Date())
                 }
             }
         }
@@ -113,13 +117,19 @@ struct RecordView: View {
         Button {
             save()
         } label: {
-            Text("Save to timeline")
-                .font(.rounded(.headline, weight: .semibold))
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 14)
+            Group {
+                if isSaving {
+                    ProgressView().tint(.white)
+                } else {
+                    Text("Save to timeline")
+                        .font(.rounded(.headline, weight: .semibold))
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 14)
         }
         .buttonStyle(.borderedProminent)
-        .disabled(transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        .disabled(isSaving || transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         .accessibilityIdentifier("record.save")
     }
 
@@ -155,13 +165,20 @@ struct RecordView: View {
 
     private func save() {
         stopListening()
-        guard var event = extracted else { return }
+        guard let preview = extracted else { return }
+        isSaving = true
         Task {
+            // Final extraction via the real intelligence (Claude when a key is
+            // present); the local preview is the guaranteed fallback.
+            var event = (try? await appEnvironment.intelligence.extractEvent(
+                from: transcript, at: preview.timestamp
+            )) ?? preview
             if let snapshot = try? await appEnvironment.environmentService.currentSnapshot() {
                 event.environment = snapshot
             }
             modelContext.insert(StoredEvent(from: event))
             try? modelContext.save()
+            isSaving = false
             dismiss()
         }
     }

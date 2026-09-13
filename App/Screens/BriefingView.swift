@@ -61,7 +61,10 @@ struct BriefingView: View {
                 from: .distantPast, to: .now
             )) ?? []
         }
-        briefing = appEnvironment.intelligence.generateBriefing(events: events, metrics: metrics, now: Date())
+        // ResilientIntelligence falls back to the mock internally; the extra
+        // ?? MockIntelligence pass covers the bare-mock configuration too.
+        briefing = (try? await appEnvironment.intelligence.generateBriefing(events: events, metrics: metrics, now: Date()))
+            ?? MockIntelligence().generateBriefing(events: events, metrics: metrics, now: Date())
     }
 
     @ViewBuilder

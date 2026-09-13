@@ -8,7 +8,7 @@ final class AppUITests: XCTestCase {
     @MainActor
     func testAppLaunchesWithAllTabs() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["-demoMode", "--mock-speech"]
+        app.launchArguments = ["-demoMode", "--mock-speech", "--mock-intelligence"]
         app.launch()
 
         XCTAssertTrue(app.tabBars.buttons["Timeline"].waitForExistence(timeout: 10))
@@ -20,7 +20,7 @@ final class AppUITests: XCTestCase {
     @MainActor
     func testRecordFlowWithMockSpeech() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["-demoMode", "--mock-speech"]
+        app.launchArguments = ["-demoMode", "--mock-speech", "--mock-intelligence"]
         app.launch()
 
         app.buttons["timeline.record"].tap()

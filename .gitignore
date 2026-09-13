@@ -8,3 +8,5 @@
 DerivedData/
 notes/
 .swiftpm/
+App/Secrets.plist
+*.swp

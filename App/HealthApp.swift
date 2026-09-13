@@ -1,4 +1,5 @@
 import SwiftUI
+import os
 import SwiftData
 import HealthCore
 
@@ -42,7 +43,17 @@ final class AppEnvironment {
     init(arguments: [String] = ProcessInfo.processInfo.arguments) {
         self.isDemoMode = arguments.contains("-demoMode")
         self.useMockSpeech = arguments.contains("--mock-speech")
-        self.intelligence = MockIntelligence()
+        // A real model (Azure OpenAI, or Claude) powers extraction + briefing
+        // whenever credentials are available; --mock-intelligence (UI tests)
+        // forces the deterministic mock, and ResilientIntelligence falls back
+        // to it on any network failure.
+        if !arguments.contains("--mock-intelligence"), let real = Secrets.makeIntelligence() {
+            self.intelligence = ResilientIntelligence(primary: real)
+        } else {
+            self.intelligence = MockIntelligence()
+        }
+        Logger(subsystem: "com.garysun.healthapp", category: "config")
+            .info("intelligence provider: \(String(describing: type(of: self.intelligence)), privacy: .public)")
         self.environmentService = isDemoMode
             ? CannedEnvironmentService()
             : OpenMeteoEnvironmentService()
