@@ -6,7 +6,7 @@ import HealthCore
 /// non-health integrations.
 ///
 /// Nothing aspirational is listed. A source appears only when it is genuinely supplying
-/// data — Interim has no direct API for Fitbit, Oura or Garmin, so they can only ever show
+/// data — Breathing Room has no direct API for Fitbit, Oura or Garmin, so they can only ever show
 /// up as sources detected inside Apple Health. Google Health is the single exception: it is
 /// a routing path the user configures on their phone, so it gets a row with instructions.
 struct ConnectionsView: View {
@@ -94,7 +94,7 @@ struct ConnectionsView: View {
 
                 Section {
                     Label {
-                        Text("Your health data never leaves your phone. Interim stores everything on-device.")
+                        Text("Your health data never leaves your phone. Breathing Room stores everything on-device.")
                             .font(.rounded(.footnote))
                     } icon: {
                         Image(systemName: "lock.shield.fill")

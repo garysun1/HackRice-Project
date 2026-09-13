@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Interim</string>
+	<string>Breathing Room</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -23,17 +23,17 @@
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>NSCalendarsFullAccessUsageDescription</key>
-	<string>Interim looks for upcoming doctor appointments to help you prepare.</string>
+	<string>Breathing Room looks for upcoming doctor appointments to help you prepare.</string>
 	<key>NSHealthShareUsageDescription</key>
-	<string>Interim reads steps, sleep, heart rate, workouts, and nutrition to correlate them with your symptoms.</string>
+	<string>Breathing Room reads steps, sleep, heart rate, workouts, and nutrition to correlate them with your symptoms.</string>
 	<key>NSHealthUpdateUsageDescription</key>
-	<string>Interim writes demo sample data in demo mode only.</string>
+	<string>Breathing Room writes demo sample data in demo mode only.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>Interim uses your location to look up local air quality.</string>
+	<string>Breathing Room uses your location to look up local air quality.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Interim uses the microphone so you can log health notes by voice.</string>
+	<string>Breathing Room uses the microphone so you can log health notes by voice.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>Interim transcribes your voice notes into your health timeline.</string>
+	<string>Breathing Room transcribes your voice notes into your health timeline.</string>
 	<key>UILaunchScreen</key>
 	<dict/>
 </dict>

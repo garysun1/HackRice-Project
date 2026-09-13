@@ -5,7 +5,7 @@ import HealthCore
 ///
 /// Every row here is backed by data that actually arrived — there are no "available" or
 /// "coming soon" placeholders. The one exception is Google Health under General Health,
-/// which is a sync path the user enables on their phone rather than an API Interim calls.
+/// which is a sync path the user enables on their phone rather than an API Breathing Room calls.
 struct CategoryConnectionsView: View {
     let category: HealthDataCategory
     let sources: [SourceContribution]
@@ -54,7 +54,7 @@ struct CategoryConnectionsView: View {
                 } header: {
                     Text("Set up")
                 } footer: {
-                    Text("Google Health has no iOS API, so Interim can't connect to it directly — but it can forward your Fitbit data into Apple Health, where Interim picks it up automatically.")
+                    Text("Google Health has no iOS API, so Breathing Room can't connect to it directly — but it can forward your Fitbit data into Apple Health, where Breathing Room picks it up automatically.")
                 }
             }
         }
@@ -110,7 +110,7 @@ enum SourceIcon {
         case sourceName.contains("Fitbit"), sourceName.contains("Google"): "figure.walk"
         case sourceName.contains("MyFitnessPal"), sourceName.contains("Cronometer"): "fork.knife"
         case sourceName.contains("Oura"), sourceName.contains("Whoop"): "bed.double.fill"
-        case sourceName.contains("Interim"): "waveform.and.mic"
+        case sourceName.contains("Breathing Room"): "waveform.and.mic"
         default: "square.stack.3d.up.fill"
         }
     }
@@ -143,7 +143,7 @@ struct GoogleHealthSetupView: View {
             } header: {
                 Text("Connect Fitbit through Google Health")
             } footer: {
-                Text("Interim never talks to Google Health or Fitbit directly — there is no iOS API for either. Once this sync is on, their data lands in Apple Health and shows up here on its own.")
+                Text("Breathing Room never talks to Google Health or Fitbit directly — there is no iOS API for either. Once this sync is on, their data lands in Apple Health and shows up here on its own.")
             }
         }
         .navigationTitle("Google Health")

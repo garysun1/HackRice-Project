@@ -1,7 +1,7 @@
 import SwiftUI
 import HealthCore
 
-/// Level 3: exactly what one source has imported into Interim.
+/// Level 3: exactly what one source has imported into Breathing Room.
 ///
 /// Every number here is derived from the data itself — day counts, date spans and latest
 /// readings — rather than inferred from the source's name.
@@ -28,7 +28,7 @@ struct SourceDetailView: View {
     private var footerText: String {
         let types = source.dataTypes.count
         let noun = types == 1 ? "data type" : "data types"
-        return "\(source.sourceName) contributes \(types) \(noun) across \(source.totalDays) days. Interim reads this from Apple Health — it never contacts \(source.sourceName) directly."
+        return "\(source.sourceName) contributes \(types) \(noun) across \(source.totalDays) days. Breathing Room reads this from Apple Health — it never contacts \(source.sourceName) directly."
     }
 }
 

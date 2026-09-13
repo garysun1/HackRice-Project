@@ -263,7 +263,7 @@ final class HealthKitProvider: HealthDataProvider, @unchecked Sendable {
     /// on a simulator or fresh device. Idempotent-ish: call once per install.
     ///
     /// Caveat: HealthKit stamps every sample with *this* app as the source, so the
-    /// Connections screen will credit "Interim" rather than "Strava"/"Fitbit".
+    /// Connections screen will credit "Breathing Room" rather than "Strava"/"Fitbit".
     /// Real attribution only appears with the real contributing apps installed.
     func seedDemoData(_ metrics: [DailyMetrics]) async throws {
         guard HKHealthStore.isHealthDataAvailable() else { return }

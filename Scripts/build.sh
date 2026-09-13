@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build Interim for the dedicated simulator. Parseable output, hang-proof.
+# Build Breathing Room for the dedicated simulator. Parseable output, hang-proof.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 

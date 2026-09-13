@@ -1,5 +1,5 @@
 #!/bin/bash
-# Simulator lifecycle for the Interim overnight build. Fully headless — never launches Simulator.app.
+# Simulator lifecycle for the Breathing Room overnight build. Fully headless — never launches Simulator.app.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 

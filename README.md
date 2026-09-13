@@ -1,4 +1,4 @@
-# Interim
+# Breathing Room
 
 **Your health, between visits.** An iOS app for the time your doctor never sees — log symptoms with a 10-second voice note, build a longitudinal healthspan record correlated with your sleep, activity, and air quality, and walk into your next appointment with a briefing instead of a memory.
 
@@ -6,7 +6,7 @@
 
 ## Why
 
-Appointments are 15 minutes; the months between them are where your health actually happens. Patients describe symptoms from memory — imprecise, incomplete, biased toward the last bad week. Interim turns "how have you been?" into data: every episode, its severity, what you took, and what the air and your sleep looked like when it happened.
+Appointments are 15 minutes; the months between them are where your health actually happens. Patients describe symptoms from memory — imprecise, incomplete, biased toward the last bad week. Breathing Room turns "how have you been?" into data: every episode, its severity, what you took, and what the air and your sleep looked like when it happened.
 
 ## What it does
 

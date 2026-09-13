@@ -1,6 +1,6 @@
 import Foundation
 
-/// The lifestyle metrics Interim aggregates, as an enumerable list.
+/// The lifestyle metrics Breathing Room aggregates, as an enumerable list.
 ///
 /// `DailyMetrics` stores these as named, individually-typed fields; this enum is the
 /// iterable view of the same set. The Connections screens need to *walk* data types

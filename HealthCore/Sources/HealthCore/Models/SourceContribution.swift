@@ -61,9 +61,9 @@ public struct DataTypeContribution: Sendable, Hashable, Identifiable {
     public var formattedLatest: String? { latestValue.map { kind.formatted($0) } }
 }
 
-/// Everything one contributing app or device has imported into Interim.
+/// Everything one contributing app or device has imported into Breathing Room.
 ///
-/// A "connection" in this app is a source detected inside Apple Health — Interim never
+/// A "connection" in this app is a source detected inside Apple Health — Breathing Room never
 /// talks to Fitbit, Oura or Garmin directly, so a source exists precisely when it is
 /// supplying data. Nothing here is aspirational.
 public struct SourceContribution: Sendable, Hashable, Identifiable {
